@@ -1,0 +1,108 @@
+"""Database schema.
+
+Raw pulls are archived as Parquet in full; only the columns a model actually
+uses get promoted into a table here. More tables land as later phases need them.
+"""
+
+from datetime import datetime
+
+from sqlalchemy import (
+    TIMESTAMP,
+    Boolean,
+    Float,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+SEASON_LEN = 9
+MATCH_ID_LEN = 128
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class Snapshot(Base):
+    """One archived pull of an upstream source."""
+
+    __tablename__ = "snapshots"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source: Mapped[str] = mapped_column(String(32))
+    season: Mapped[str] = mapped_column(String(SEASON_LEN))
+
+    # Upstream overwrites its files in place and its own news_added column comes
+    # through empty, so this is the only trustworthy record of when a fact
+    # became knowable.
+    fetched_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+
+    source_ref: Mapped[str] = mapped_column(String(64))
+    storage_uri: Mapped[str] = mapped_column(Text)
+    content_hash: Mapped[str] = mapped_column(String(64))
+    row_count: Mapped[int] = mapped_column(Integer)
+
+    __table_args__ = (
+        # Backs the skip in archive(), and stops two concurrent runs both
+        # storing the same pull.
+        UniqueConstraint("source", "season", "content_hash", name="uq_snapshots_content"),
+        Index("ix_snapshots_source_fetched_at", "source", "fetched_at"),
+    )
+
+
+class Team(Base):
+    # code is stable across seasons, fpl_id is reassigned each season.
+    __tablename__ = "teams"
+
+    season: Mapped[str] = mapped_column(String(SEASON_LEN), primary_key=True)
+    fpl_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    code: Mapped[int] = mapped_column(Integer)
+    name: Mapped[str] = mapped_column(String(64))
+    short_name: Mapped[str] = mapped_column(String(8))
+
+    __table_args__ = (Index("ix_teams_code", "code"),)
+
+
+class Player(Base):
+    __tablename__ = "players"
+
+    season: Mapped[str] = mapped_column(String(SEASON_LEN), primary_key=True)
+    fpl_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    code: Mapped[int] = mapped_column(Integer)
+    first_name: Mapped[str] = mapped_column(String(64))
+    second_name: Mapped[str] = mapped_column(String(64))
+    web_name: Mapped[str] = mapped_column(String(64))
+    team_code: Mapped[int] = mapped_column(Integer)
+    position: Mapped[str] = mapped_column(String(16))
+
+    __table_args__ = (Index("ix_players_code", "code"),)
+
+
+class Fixture(Base):
+    """A scheduled or completed match in any competition.
+
+    European ties live here too, because the rotation model needs a club's whole
+    calendar to work out rest days. Team ids are nullable since upstream only
+    assigns them to clubs that exist in FPL, so a Barcelona row has a name and
+    no id.
+    """
+
+    __tablename__ = "fixtures"
+
+    match_id: Mapped[str] = mapped_column(String(MATCH_ID_LEN), primary_key=True)
+    season: Mapped[str] = mapped_column(String(SEASON_LEN))
+    gameweek: Mapped[int] = mapped_column(Integer)
+    tournament: Mapped[str] = mapped_column(String(32))
+    kickoff_time: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    home_team_id: Mapped[int | None] = mapped_column(Integer)
+    away_team_id: Mapped[int | None] = mapped_column(Integer)
+    home_team_elo: Mapped[float | None] = mapped_column(Float)
+    away_team_elo: Mapped[float | None] = mapped_column(Float)
+    home_score: Mapped[int | None] = mapped_column(Integer)
+    away_score: Mapped[int | None] = mapped_column(Integer)
+    finished: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    __table_args__ = (Index("ix_fixtures_season_gameweek", "season", "gameweek"),)
