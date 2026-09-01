@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: plpd
+      POSTGRES_PASSWORD: plpd
+      POSTGRES_DB: plpd
+    ports:
+      - "5432:5432"
+    volumes:
+      - plpd-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U plpd -d plpd"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  plpd-pgdata:
