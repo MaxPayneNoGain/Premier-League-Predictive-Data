@@ -85,9 +85,11 @@ class Fixture(Base):
     """A scheduled or completed match in any competition.
 
     European ties live here too, because the rotation model needs a club's whole
-    calendar to work out rest days. Team ids are nullable since upstream only
-    assigns them to clubs that exist in FPL, so a Barcelona row has a name and
-    no id.
+    calendar to work out rest days. The team columns carry codes and not FPL
+    ids, which is what upstream puts there and also the only key that survives a
+    season rollover. They are nullable because upstream assigns them solely to
+    clubs that exist in FPL, so a Barcelona row arrives with a name and nothing
+    else.
     """
 
     __tablename__ = "fixtures"
@@ -97,8 +99,8 @@ class Fixture(Base):
     gameweek: Mapped[int] = mapped_column(Integer)
     tournament: Mapped[str] = mapped_column(String(32))
     kickoff_time: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
-    home_team_id: Mapped[int | None] = mapped_column(Integer)
-    away_team_id: Mapped[int | None] = mapped_column(Integer)
+    home_team_code: Mapped[int | None] = mapped_column(Integer)
+    away_team_code: Mapped[int | None] = mapped_column(Integer)
     home_team_elo: Mapped[float | None] = mapped_column(Float)
     away_team_elo: Mapped[float | None] = mapped_column(Float)
     home_score: Mapped[int | None] = mapped_column(Integer)
