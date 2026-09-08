@@ -14,6 +14,7 @@ from plpd.config import Settings
 from plpd.db import build_engine, build_session_factory
 from plpd.ingest import FplCoreSource
 from plpd.ingest.load import (
+    archived_snapshots,
     fixture_paths,
     latest_snapshot,
     load_fixtures,
@@ -27,6 +28,11 @@ log = logging.getLogger("plpd.load")
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="plpd-load")
     parser.add_argument("--season", action="append", metavar="YYYY-YYYY")
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Replay every archived pull for the season, oldest first.",
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)-7s %(message)s")
@@ -36,21 +42,27 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     for season in args.season or [settings.current_season]:
         with session_factory() as session, session.begin():
-            snapshot = latest_snapshot(session, source=FplCoreSource.name, season=season)
-            if snapshot is None:
+            if args.all:
+                snapshots = archived_snapshots(session, source=FplCoreSource.name, season=season)
+            else:
+                newest = latest_snapshot(session, source=FplCoreSource.name, season=season)
+                snapshots = [newest] if newest is not None else []
+
+            if not snapshots:
                 log.error("no snapshot archived for %s - run plpd-snapshot first", season)
                 return 1
 
-            teams = load_teams(session, snapshot)
-            players = load_players(session, snapshot)
-            fixtures = load_fixtures(session, snapshot) if fixture_paths(snapshot) else 0
-            log.info(
-                "snapshot %d: %d teams, %d players, %d fixtures",
-                snapshot.id,
-                teams,
-                players,
-                fixtures,
-            )
+            for snapshot in snapshots:
+                teams = load_teams(session, snapshot)
+                players = load_players(session, snapshot)
+                fixtures = load_fixtures(session, snapshot) if fixture_paths(snapshot) else 0
+                log.info(
+                    "snapshot %d: %d teams, %d players, %d fixtures",
+                    snapshot.id,
+                    teams,
+                    players,
+                    fixtures,
+                )
 
     return 0
 

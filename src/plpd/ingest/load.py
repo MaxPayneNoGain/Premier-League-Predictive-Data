@@ -62,6 +62,23 @@ def latest_snapshot(session: Session, *, source: str, season: str) -> Snapshot |
     )
 
 
+def archived_snapshots(session: Session, *, source: str, season: str) -> list[Snapshot]:
+    """Every pull for a season, oldest first.
+
+    A backfill archives one gameweek at a time, so a season's fixtures are
+    spread across as many snapshots as there are gameweeks and only a replay
+    reaches them all. Oldest first means the newest pull is the one that lands
+    last and wins.
+    """
+    return list(
+        session.scalars(
+            select(Snapshot)
+            .where(Snapshot.source == source, Snapshot.season == season)
+            .order_by(Snapshot.fetched_at)
+        )
+    )
+
+
 def fixture_paths(snapshot: Snapshot) -> list[Path]:
     # A pull made without --gameweek archives the season files only, so callers
     # need to be able to ask before loading rather than handle a failure.

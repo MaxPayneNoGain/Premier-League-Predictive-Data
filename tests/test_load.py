@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from plpd.db.tables import Fixture, Player, Snapshot, Team
 from plpd.ingest.load import (
+    archived_snapshots,
     load_fixtures,
     load_players,
     load_teams,
@@ -73,7 +74,12 @@ PLAYERS = pd.DataFrame(
 
 
 def make_snapshot(
-    session: Session, root: Path, frames: dict[str, pd.DataFrame], *, tag: str = "a"
+    session: Session,
+    root: Path,
+    frames: dict[str, pd.DataFrame],
+    *,
+    tag: str = "a",
+    fetched_at: datetime = FETCHED_AT,
 ) -> Snapshot:
     destination = root / tag
     destination.mkdir(parents=True)
@@ -83,7 +89,7 @@ def make_snapshot(
     snapshot = Snapshot(
         source="fpl_core",
         season="2026-2027",
-        fetched_at=FETCHED_AT,
+        fetched_at=fetched_at,
         source_ref="main",
         storage_uri=destination.as_posix(),
         content_hash=tag * 64,
@@ -186,3 +192,28 @@ def test_a_snapshot_without_fixtures_is_named_in_the_error(
 
     with pytest.raises(FileNotFoundError, match="no gameweek fixtures"):
         load_fixtures(session, snapshot)
+
+
+def test_a_replay_runs_oldest_first_so_the_newest_pull_wins(
+    session: Session, tmp_path: Path
+) -> None:
+    older = make_snapshot(session, tmp_path, {"teams": TEAMS})
+    renamed = TEAMS.copy()
+    renamed.loc[0, "short_name"] = "ARE"
+    newer = make_snapshot(
+        session,
+        tmp_path,
+        {"teams": renamed},
+        tag="b",
+        fetched_at=datetime(2026, 8, 31, 18, 0, tzinfo=UTC),
+    )
+
+    replay = archived_snapshots(session, source="fpl_core", season="2026-2027")
+    assert [snapshot.id for snapshot in replay] == [older.id, newer.id]
+
+    for snapshot in replay:
+        load_teams(session, snapshot)
+
+    arsenal = session.get(Team, ("2026-2027", 1))
+    assert arsenal is not None
+    assert arsenal.short_name == "ARE"
