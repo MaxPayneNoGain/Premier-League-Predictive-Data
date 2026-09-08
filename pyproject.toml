@@ -24,6 +24,7 @@ dev = [
 
 [project.scripts]
 plpd-snapshot = "plpd.pipelines.snapshot:main"
+plpd-load = "plpd.pipelines.load:main"
 
 [build-system]
 requires = ["setuptools>=68"]

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from plpd.db.tables import Fixture, Player, Snapshot, Team
@@ -51,6 +52,20 @@ def to_datetime(value: str) -> datetime | None:
     UTC and only the marker is missing.
     """
     return datetime.fromisoformat(value).replace(tzinfo=UTC) if value else None
+
+
+def latest_snapshot(session: Session, *, source: str, season: str) -> Snapshot | None:
+    return session.scalar(
+        select(Snapshot)
+        .where(Snapshot.source == source, Snapshot.season == season)
+        .order_by(Snapshot.fetched_at.desc())
+    )
+
+
+def fixture_paths(snapshot: Snapshot) -> list[Path]:
+    # A pull made without --gameweek archives the season files only, so callers
+    # need to be able to ask before loading rather than handle a failure.
+    return sorted(Path(snapshot.storage_uri).glob("GW*__fixtures.parquet"))
 
 
 def read_frame(snapshot: Snapshot, name: str) -> pd.DataFrame:
@@ -99,7 +114,7 @@ def load_fixtures(session: Session, snapshot: Snapshot) -> int:
     The team columns carry codes rather than FPL ids, and the file has no season
     column, so that comes from the snapshot.
     """
-    paths = sorted(Path(snapshot.storage_uri).glob("GW*__fixtures.parquet"))
+    paths = fixture_paths(snapshot)
     if not paths:
         raise FileNotFoundError(
             f"snapshot {snapshot.id} archived no gameweek fixtures under {snapshot.storage_uri}"
