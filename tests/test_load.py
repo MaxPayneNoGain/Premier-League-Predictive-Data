@@ -6,8 +6,14 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from plpd.db.tables import Player, Snapshot, Team
-from plpd.ingest.load import load_players, load_teams
+from plpd.db.tables import Fixture, Player, Snapshot, Team
+from plpd.ingest.load import (
+    load_fixtures,
+    load_players,
+    load_teams,
+    to_datetime,
+    to_int,
+)
 
 FETCHED_AT = datetime(2026, 8, 31, 8, 0, tzinfo=UTC)
 
@@ -15,6 +21,39 @@ TEAMS = pd.DataFrame(
     [
         {"code": "3", "id": "1", "name": "Arsenal", "short_name": "ARS"},
         {"code": "91", "id": "2", "name": "AFC Bournemouth", "short_name": "BOU"},
+    ]
+)
+
+# Upstream writes the team columns as floats and the flags as words, so the
+# archived text carries both spellings verbatim.
+FIXTURES = pd.DataFrame(
+    [
+        {
+            "gameweek": "3",
+            "tournament": "prem",
+            "match_id": "26-27-prem-ipswich-town-vs-liverpool",
+            "kickoff_time": "2026-09-04T19:00:00",
+            "home_team": "40.0",
+            "away_team": "14.0",
+            "home_team_elo": "",
+            "away_team_elo": "",
+            "home_score": "0.0",
+            "away_score": "2.0",
+            "finished": "True",
+        },
+        {
+            "gameweek": "3",
+            "tournament": "prem",
+            "match_id": "26-27-prem-arsenal-vs-chelsea",
+            "kickoff_time": "2026-09-06T15:30:00",
+            "home_team": "3.0",
+            "away_team": "8.0",
+            "home_team_elo": "",
+            "away_team_elo": "",
+            "home_score": "",
+            "away_score": "",
+            "finished": "False",
+        },
     ]
 )
 
@@ -96,3 +135,54 @@ def test_a_missing_file_names_the_snapshot_and_the_path(session: Session, tmp_pa
 
     with pytest.raises(FileNotFoundError, match=r"players\.parquet"):
         load_players(session, snapshot)
+
+
+def test_float_formatted_team_codes_become_integers(session: Session, tmp_path: Path) -> None:
+    snapshot = make_snapshot(session, tmp_path, {"GW3__fixtures": FIXTURES})
+
+    assert load_fixtures(session, snapshot) == 2
+
+    arsenal = session.get(Fixture, "26-27-prem-arsenal-vs-chelsea")
+    assert arsenal is not None
+    assert (arsenal.home_team_code, arsenal.away_team_code) == (3, 8)
+    assert arsenal.season == "2026-2027"
+
+
+def test_an_unplayed_fixture_is_not_marked_finished(session: Session, tmp_path: Path) -> None:
+    load_fixtures(session, make_snapshot(session, tmp_path, {"GW3__fixtures": FIXTURES}))
+
+    played = session.get(Fixture, "26-27-prem-ipswich-town-vs-liverpool")
+    unplayed = session.get(Fixture, "26-27-prem-arsenal-vs-chelsea")
+    assert played is not None and unplayed is not None
+    assert played.finished is True
+    assert unplayed.finished is False
+
+
+def test_blank_scores_and_elo_load_as_null_not_zero(session: Session, tmp_path: Path) -> None:
+    load_fixtures(session, make_snapshot(session, tmp_path, {"GW3__fixtures": FIXTURES}))
+
+    unplayed = session.get(Fixture, "26-27-prem-arsenal-vs-chelsea")
+    assert unplayed is not None
+    assert unplayed.home_score is None
+    assert unplayed.home_team_elo is None
+
+
+def test_kickoff_times_are_read_as_utc() -> None:
+    # SQLite drops the offset on the way back out, so this checks the cast
+    # rather than a round trip.
+    assert to_datetime("2026-09-05T14:00:00") == datetime(2026, 9, 5, 14, 0, tzinfo=UTC)
+    assert to_datetime("") is None
+
+
+def test_a_fractional_code_is_rejected_rather_than_truncated() -> None:
+    with pytest.raises(ValueError, match="whole number"):
+        to_int("3.5")
+
+
+def test_a_snapshot_without_fixtures_is_named_in_the_error(
+    session: Session, tmp_path: Path
+) -> None:
+    snapshot = make_snapshot(session, tmp_path, {"teams": TEAMS})
+
+    with pytest.raises(FileNotFoundError, match="no gameweek fixtures"):
+        load_fixtures(session, snapshot)

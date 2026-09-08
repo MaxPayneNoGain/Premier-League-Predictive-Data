@@ -1,23 +1,56 @@
 """Promotion of an archived snapshot into the relational tables.
 
 Archives keep every column as text so that repeated pulls stay comparable, which
-makes this the place where each column's intended type is decided.
+makes this the place where each column's intended type is decided. Every cast
+here treats a blank as absent rather than as a zero-valued default.
 """
 
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 from sqlalchemy.orm import Session
 
-from plpd.db.tables import Player, Snapshot, Team
+from plpd.db.tables import Fixture, Player, Snapshot, Team
 from plpd.db.upsert import upsert
+
+BOOLEANS = {"True": True, "False": False}
 
 
 def to_int(value: str) -> int | None:
-    # A blank means upstream has no value for the column, which is not the same
-    # as zero.
-    return int(value) if value else None
+    if not value:
+        return None
+    # Whole numbers arrive float-formatted ("88.0") wherever upstream writes the
+    # column as a float, and int() rejects that string outright. Going through
+    # float() accepts both spellings; refusing a fractional value keeps it from
+    # quietly truncating an id into a different club's.
+    number = float(value)
+    if not number.is_integer():
+        raise ValueError(f"expected a whole number, got {value!r}")
+    return int(number)
+
+
+def to_float(value: str) -> float | None:
+    return float(value) if value else None
+
+
+def to_bool(value: str) -> bool:
+    # bool("False") is True, so the spellings have to be mapped rather than
+    # coerced - otherwise every unplayed fixture loads as finished.
+    if value not in BOOLEANS:
+        raise ValueError(f"expected 'True' or 'False', got {value!r}")
+    return BOOLEANS[value]
+
+
+def to_datetime(value: str) -> datetime | None:
+    """Read a kickoff time, which upstream writes without an offset.
+
+    The Saturday slots in the data land on 11:30, 14:00 and 16:30, which are the
+    league's 12:30, 15:00 and 17:30 British Summer Time kickoffs. So the clock is
+    UTC and only the marker is missing.
+    """
+    return datetime.fromisoformat(value).replace(tzinfo=UTC) if value else None
 
 
 def read_frame(snapshot: Snapshot, name: str) -> pd.DataFrame:
@@ -57,4 +90,38 @@ def load_players(session: Session, snapshot: Snapshot) -> int:
         for row in read_frame(snapshot, "players").to_dict(orient="records")
     ]
     upsert(session, Player, rows)
+    return len(rows)
+
+
+def load_fixtures(session: Session, snapshot: Snapshot) -> int:
+    """Load every gameweek's fixtures the archive happens to hold.
+
+    The team columns carry codes rather than FPL ids, and the file has no season
+    column, so that comes from the snapshot.
+    """
+    paths = sorted(Path(snapshot.storage_uri).glob("GW*__fixtures.parquet"))
+    if not paths:
+        raise FileNotFoundError(
+            f"snapshot {snapshot.id} archived no gameweek fixtures under {snapshot.storage_uri}"
+        )
+
+    rows: list[dict[str, Any]] = [
+        {
+            "match_id": row["match_id"],
+            "season": snapshot.season,
+            "gameweek": to_int(row["gameweek"]),
+            "tournament": row["tournament"],
+            "kickoff_time": to_datetime(row["kickoff_time"]),
+            "home_team_code": to_int(row["home_team"]),
+            "away_team_code": to_int(row["away_team"]),
+            "home_team_elo": to_float(row["home_team_elo"]),
+            "away_team_elo": to_float(row["away_team_elo"]),
+            "home_score": to_int(row["home_score"]),
+            "away_score": to_int(row["away_score"]),
+            "finished": to_bool(row["finished"]),
+        }
+        for path in paths
+        for row in pd.read_parquet(path).to_dict(orient="records")
+    ]
+    upsert(session, Fixture, rows)
     return len(rows)
