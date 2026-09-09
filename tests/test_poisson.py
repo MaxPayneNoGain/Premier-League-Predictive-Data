@@ -2,6 +2,7 @@ import pandas as pd
 import pytest
 
 from plpd.models import expected_goals, fit, outcome_probabilities, predict, score_matrix
+from plpd.models.poisson import RHO_BOUNDS
 
 HOME, DRAW, AWAY = 0, 1, 2
 
@@ -107,3 +108,64 @@ def test_a_club_never_seen_in_training_is_treated_as_average() -> None:
 def test_fitting_needs_matches() -> None:
     with pytest.raises(ValueError, match="at least one match"):
         fit(league([]))
+
+
+SPREAD = [(0, 0), (1, 0), (0, 1), (1, 1), (2, 0), (0, 2), (2, 1), (1, 2), (2, 2), (3, 1), (1, 3)]
+
+
+def draw_heavy(repeats: int = 2) -> pd.DataFrame:
+    pairs = [(home, away) for home in sorted(SCORED) for away in sorted(SCORED) if home != away]
+    rows = [
+        (home, away, home_goals, away_goals)
+        for _ in range(repeats)
+        for home, away in pairs
+        for home_goals, away_goals in SPREAD
+    ]
+    rows += [(home, away, goals, goals) for home, away in pairs for goals in (0, 1)]
+    return league(rows)
+
+
+def test_the_correction_leaves_higher_scorelines_in_proportion() -> None:
+    plain = score_matrix(1.5, 1.2)
+    corrected = score_matrix(1.5, 1.2, -0.1)
+
+    assert corrected[2, 2] / corrected[3, 1] == pytest.approx(plain[2, 2] / plain[3, 1])
+
+
+def test_a_negative_rho_lifts_the_low_draws_and_cuts_the_one_goal_wins() -> None:
+    plain = score_matrix(1.5, 1.2)
+    corrected = score_matrix(1.5, 1.2, -0.1)
+
+    assert corrected[0, 0] > plain[0, 0]
+    assert corrected[1, 1] > plain[1, 1]
+    assert corrected[1, 0] < plain[1, 0]
+    assert corrected[0, 1] < plain[0, 1]
+
+
+def test_the_corrected_matrix_is_still_a_distribution() -> None:
+    corrected = score_matrix(1.5, 1.2, -0.1)
+
+    assert corrected.sum() == pytest.approx(1.0)
+    assert (corrected >= 0).all()
+
+
+def test_the_correction_is_off_unless_it_is_asked_for() -> None:
+    model = fit(draw_heavy())
+
+    assert model.rho == 0.0
+
+
+def test_the_correction_finds_a_negative_rho_when_low_draws_pile_up() -> None:
+    model = fit(draw_heavy(), correlation=True)
+
+    assert model.rho < 0.0
+    assert RHO_BOUNDS[0] < model.rho < RHO_BOUNDS[1]
+
+
+def test_the_correction_raises_the_chance_of_a_draw() -> None:
+    matches = draw_heavy()
+
+    plain = predict(fit(matches), fixture(STRONG, WEAK))
+    corrected = predict(fit(matches, correlation=True), fixture(STRONG, WEAK))
+
+    assert corrected[0, DRAW] > plain[0, DRAW]

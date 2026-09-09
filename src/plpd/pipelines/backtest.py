@@ -24,6 +24,7 @@ PREDICTORS: dict[str, Predictor] = {
     "always home": lambda _, test: always_home(len(test)),
     "base rates": lambda train, test: base_rates(outcomes(train), len(test)),
     "poisson": lambda train, test: predict(fit(train), test),
+    "dixon-coles": lambda train, test: predict(fit(train, correlation=True), test),
 }
 
 
