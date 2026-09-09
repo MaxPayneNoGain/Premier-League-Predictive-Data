@@ -5,11 +5,12 @@ import pytest
 from plpd.evaluation import score_walk_forward, walk_forward
 
 
-def matches(*rows: tuple[str, int, str]) -> pd.DataFrame:
+def matches(*rows: tuple[str, int, str], label: str = "2025-2026") -> pd.DataFrame:
     return pd.DataFrame(
         [
             {
                 "match_id": match_id,
+                "season": label,
                 "gameweek": gameweek,
                 "kickoff_time": pd.Timestamp(kickoff),
                 "home_goals": 2,
@@ -21,15 +22,33 @@ def matches(*rows: tuple[str, int, str]) -> pd.DataFrame:
 
 
 SEASON_START = pd.Timestamp("2025-08-09")
+EARLIER_START = pd.Timestamp("2024-08-10")
 
 
-def season(gameweeks: int, per_week: int = 10) -> pd.DataFrame:
+def season(
+    gameweeks: int,
+    per_week: int = 10,
+    *,
+    label: str = "2025-2026",
+    start: pd.Timestamp = SEASON_START,
+) -> pd.DataFrame:
     return matches(
         *(
-            (f"gw{week}-{game}", week, str(SEASON_START + pd.Timedelta(weeks=week)))
+            (f"{label}-gw{week}-{game}", week, str(start + pd.Timedelta(weeks=week)))
             for week in range(1, gameweeks + 1)
             for game in range(per_week)
-        )
+        ),
+        label=label,
+    )
+
+
+def two_seasons(gameweeks: int = 12, per_week: int = 10) -> pd.DataFrame:
+    return pd.concat(
+        [
+            season(gameweeks, per_week, label="2024-2025", start=EARLIER_START),
+            season(gameweeks, per_week, label="2025-2026", start=SEASON_START),
+        ],
+        ignore_index=True,
     )
 
 
@@ -94,3 +113,42 @@ def test_every_predicted_match_is_counted_once() -> None:
 def test_a_season_too_short_to_learn_from_is_rejected() -> None:
     with pytest.raises(ValueError, match="earlier matches"):
         score_walk_forward(season(2), always_right, min_train=60)
+
+
+def test_the_same_round_in_two_seasons_makes_two_folds() -> None:
+    folds = [fold for fold in walk_forward(two_seasons(), min_train=10) if fold.gameweek == 8]
+
+    assert [fold.season for fold in folds] == ["2024-2025", "2025-2026"]
+
+
+def test_no_fold_tests_two_seasons_at_once() -> None:
+    for fold in walk_forward(two_seasons(), min_train=10):
+        assert set(fold.test["season"]) == {fold.season}
+
+
+def test_a_later_round_trains_on_its_own_season_and_not_only_the_last_one() -> None:
+    fold = next(
+        fold
+        for fold in walk_forward(two_seasons(), min_train=10)
+        if fold.season == "2025-2026" and fold.gameweek == 8
+    )
+
+    assert "2025-2026" in set(fold.train["season"])
+
+
+def test_the_first_round_of_a_season_trains_on_the_one_before() -> None:
+    fold = next(
+        fold
+        for fold in walk_forward(two_seasons(), min_train=10)
+        if fold.season == "2025-2026" and fold.gameweek == 1
+    )
+
+    assert set(fold.train["season"]) == {"2024-2025"}
+
+
+def test_folds_arrive_in_kickoff_order_across_seasons() -> None:
+    cutoffs = [
+        fold.test["kickoff_time"].min() for fold in walk_forward(two_seasons(), min_train=10)
+    ]
+
+    assert cutoffs == sorted(cutoffs)
