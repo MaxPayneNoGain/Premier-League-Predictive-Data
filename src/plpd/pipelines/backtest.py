@@ -21,7 +21,7 @@ from plpd.evaluation import (
     uniform,
 )
 from plpd.features import finished_matches, outcomes
-from plpd.models import fit, predict
+from plpd.models import HALF_LIFE_DAYS, fit, predict
 
 log = logging.getLogger("plpd.backtest")
 
@@ -31,6 +31,9 @@ PREDICTORS: dict[str, Predictor] = {
     "base rates": lambda train, test: base_rates(outcomes(train), len(test)),
     "poisson": lambda train, test: predict(fit(train), test),
     "dixon-coles": lambda train, test: predict(fit(train, correlation=True), test),
+    "dixon-coles decayed": lambda train, test: predict(
+        fit(train, correlation=True, half_life=HALF_LIFE_DAYS), test
+    ),
 }
 
 OUTCOMES = ("home", "draw", "away")
@@ -63,7 +66,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     chosen = None
     uncertainty = 0.0
     print(
-        f"{'predictor':<14}{'matches':>9}{'Brier':>9}{'log loss':>11}"
+        f"{'predictor':<22}{'matches':>9}{'Brier':>9}{'log loss':>11}"
         f"{'RPS':>9}{'reliability':>13}{'resolution':>12}"
     )
     for name, predictor in PREDICTORS.items():
@@ -72,7 +75,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         parts = decompose(probabilities, results)
         uncertainty = parts.uncertainty
         print(
-            f"{name:<14}{scores.matches:>9}{scores.brier:>9.4f}"
+            f"{name:<22}{scores.matches:>9}{scores.brier:>9.4f}"
             f"{scores.log_loss:>11.4f}{scores.rps:>9.4f}"
             f"{parts.reliability:>13.4f}{parts.resolution:>12.4f}"
         )

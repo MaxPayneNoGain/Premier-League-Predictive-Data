@@ -2,7 +2,7 @@ import pandas as pd
 import pytest
 
 from plpd.models import expected_goals, fit, outcome_probabilities, predict, score_matrix
-from plpd.models.poisson import RHO_BOUNDS
+from plpd.models.poisson import RHO_BOUNDS, _decay_weights
 
 HOME, DRAW, AWAY = 0, 1, 2
 
@@ -169,3 +169,58 @@ def test_the_correction_raises_the_chance_of_a_draw() -> None:
     corrected = predict(fit(matches, correlation=True), fixture(STRONG, WEAK))
 
     assert corrected[0, DRAW] > plain[0, DRAW]
+
+
+def reversal(repeats: int = 8) -> pd.DataFrame:
+    early = [(STRONG, WEAK, 3, 1), (WEAK, STRONG, 1, 3)] * repeats
+    late = [(STRONG, WEAK, 1, 3), (WEAK, STRONG, 3, 1)] * repeats
+    frame = league(early + late)
+    frame["kickoff_time"] = list(pd.date_range("2025-01-01", periods=len(early), freq="D")) + list(
+        pd.date_range("2026-01-01", periods=len(late), freq="D")
+    )
+    return frame
+
+
+def test_a_match_one_half_life_old_counts_half() -> None:
+    matches = league([(STRONG, WEAK, 1, 0), (WEAK, STRONG, 1, 0)])
+    matches["kickoff_time"] = [pd.Timestamp("2025-01-01"), pd.Timestamp("2025-04-01")]
+
+    weights = _decay_weights(matches, 90)
+
+    assert weights[1] == pytest.approx(1.0)
+    assert weights[0] == pytest.approx(0.5)
+
+
+def test_without_decay_a_reversal_leaves_both_sides_level() -> None:
+    model = fit(reversal())
+
+    strong = model.attack[model.teams[STRONG]]
+    weak = model.attack[model.teams[WEAK]]
+
+    assert strong == pytest.approx(weak, abs=0.01)
+
+
+def test_decay_lets_recent_form_outweigh_old_form() -> None:
+    model = fit(reversal(), half_life=30)
+
+    strong = model.attack[model.teams[STRONG]]
+    weak = model.attack[model.teams[WEAK]]
+
+    assert weak > strong + 0.5
+
+
+def test_a_very_long_half_life_is_almost_no_decay() -> None:
+    plain = fit(reversal())
+    slow = fit(reversal(), half_life=100_000)
+
+    assert slow.attack[slow.teams[WEAK]] == pytest.approx(plain.attack[plain.teams[WEAK]], abs=0.01)
+
+
+def test_a_half_life_must_be_positive() -> None:
+    with pytest.raises(ValueError, match="must be positive"):
+        fit(reversal(), half_life=0)
+
+
+def test_decay_needs_a_kickoff_time() -> None:
+    with pytest.raises(ValueError, match="kickoff_time"):
+        fit(synthetic(), half_life=30)

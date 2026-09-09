@@ -1,4 +1,5 @@
 from plpd.models.poisson import (
+    HALF_LIFE_DAYS,
     PoissonModel,
     expected_goals,
     fit,
@@ -8,6 +9,7 @@ from plpd.models.poisson import (
 )
 
 __all__ = [
+    "HALF_LIFE_DAYS",
     "PoissonModel",
     "expected_goals",
     "fit",

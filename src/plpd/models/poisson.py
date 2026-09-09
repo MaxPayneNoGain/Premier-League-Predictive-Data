@@ -13,6 +13,12 @@ Indices = npt.NDArray[np.int_]
 
 MAX_GOALS = 10
 
+SECONDS_PER_DAY = 86400.0
+
+# Swept over the 2024-2025 folds and chosen on out-of-sample RPS. The curve is
+# flat from roughly 180 days upward and clearly worse below 90.
+HALF_LIFE_DAYS = 240.0
+
 RHO_BOUNDS = (-0.3, 0.3)
 
 # The optimiser can try a rho that drives tau non-positive on its way to a fit.
@@ -78,6 +84,18 @@ def _tau(
     return tau
 
 
+def _decay_weights(matches: pd.DataFrame, half_life: float) -> Vector:
+    if half_life <= 0:
+        raise ValueError(f"half_life must be positive, got {half_life}")
+    if "kickoff_time" not in matches:
+        raise ValueError("time decay needs a kickoff_time column")
+
+    kickoff = pd.to_datetime(matches["kickoff_time"])
+    age = (kickoff.max() - kickoff).dt.total_seconds() / SECONDS_PER_DAY
+    weights: Vector = np.exp2(-age.to_numpy(dtype=np.float64) / half_life)
+    return weights
+
+
 def _negative_log_likelihood(
     params: Vector,
     teams: int,
@@ -85,6 +103,7 @@ def _negative_log_likelihood(
     away: Indices,
     home_goals: Vector,
     away_goals: Vector,
+    weights: Vector,
 ) -> float:
     attack, defence, home_advantage, intercept, rho = _unpack(params, teams)
     log_home, log_away = _log_rates(attack, defence, home_advantage, intercept, home, away)
@@ -93,15 +112,19 @@ def _negative_log_likelihood(
     tau = _tau(home_goals, away_goals, home_rate, away_rate, rho)
     # The log(y!) term is left out. It does not depend on the parameters.
     return float(
-        np.sum(home_rate - home_goals * log_home)
-        + np.sum(away_rate - away_goals * log_away)
-        - np.sum(np.log(np.clip(tau, TAU_FLOOR, None)))
+        np.sum(weights * (home_rate - home_goals * log_home))
+        + np.sum(weights * (away_rate - away_goals * log_away))
+        - np.sum(weights * np.log(np.clip(tau, TAU_FLOOR, None)))
     )
 
 
-def fit(matches: pd.DataFrame, *, correlation: bool = False) -> PoissonModel:
+def fit(
+    matches: pd.DataFrame, *, correlation: bool = False, half_life: float | None = None
+) -> PoissonModel:
     if matches.empty:
         raise ValueError("a Poisson model needs at least one match to fit")
+
+    weights = np.ones(len(matches)) if half_life is None else _decay_weights(matches, half_life)
 
     codes = sorted(set(matches["home_team_code"]) | set(matches["away_team_code"]))
     teams = {int(code): index for index, code in enumerate(codes)}
@@ -122,7 +145,7 @@ def fit(matches: pd.DataFrame, *, correlation: bool = False) -> PoissonModel:
     fitted = minimize(
         _negative_log_likelihood,
         start,
-        args=(len(teams), home, away, home_goals, away_goals),
+        args=(len(teams), home, away, home_goals, away_goals, weights),
         method="L-BFGS-B",
         bounds=bounds,
     )
