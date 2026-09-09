@@ -8,10 +8,16 @@ from collections.abc import Sequence
 from plpd.config import Settings
 from plpd.db import build_engine, build_session_factory
 from plpd.evaluation import (
+    Outcomes,
     Predictor,
+    Probabilities,
     always_home,
     base_rates,
-    score_walk_forward,
+    decompose,
+    outcome_rates,
+    pooled_predictions,
+    reliability_bins,
+    score,
     uniform,
 )
 from plpd.features import finished_matches, outcomes
@@ -27,12 +33,22 @@ PREDICTORS: dict[str, Predictor] = {
     "dixon-coles": lambda train, test: predict(fit(train, correlation=True), test),
 }
 
+OUTCOMES = ("home", "draw", "away")
+
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="plpd-backtest")
     parser.add_argument("--tournament", default="prem")
     parser.add_argument("--min-train", type=int, default=60)
+    parser.add_argument(
+        "--calibration",
+        metavar="PREDICTOR",
+        help="also print the reliability table for one predictor",
+    )
     args = parser.parse_args(argv)
+
+    if args.calibration is not None and args.calibration not in PREDICTORS:
+        parser.error(f"unknown predictor {args.calibration!r}, pick from {', '.join(PREDICTORS)}")
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)-7s %(message)s")
 
@@ -44,15 +60,46 @@ def main(argv: Sequence[str] | None = None) -> int:
         log.error("no finished %s matches are loaded - run plpd-load first", args.tournament)
         return 1
 
-    print(f"{'predictor':<14}{'matches':>9}{'Brier':>9}{'log loss':>11}{'RPS':>9}")
+    chosen = None
+    uncertainty = 0.0
+    print(
+        f"{'predictor':<14}{'matches':>9}{'Brier':>9}{'log loss':>11}"
+        f"{'RPS':>9}{'reliability':>13}{'resolution':>12}"
+    )
     for name, predictor in PREDICTORS.items():
-        scores = score_walk_forward(matches, predictor, min_train=args.min_train)
+        probabilities, results = pooled_predictions(matches, predictor, min_train=args.min_train)
+        scores = score(probabilities, results)
+        parts = decompose(probabilities, results)
+        uncertainty = parts.uncertainty
         print(
             f"{name:<14}{scores.matches:>9}{scores.brier:>9.4f}"
             f"{scores.log_loss:>11.4f}{scores.rps:>9.4f}"
+            f"{parts.reliability:>13.4f}{parts.resolution:>12.4f}"
         )
+        if name == args.calibration:
+            chosen = (probabilities, results)
+
+    print(f"\nuncertainty {uncertainty:.4f}, set by the results alone and equal for every row")
+
+    if chosen is not None:
+        _print_calibration(*chosen, name=str(args.calibration))
 
     return 0
+
+
+def _print_calibration(probabilities: Probabilities, results: Outcomes, *, name: str) -> None:
+    print(f"\nreliability for {name}")
+    print(f"{'bin':<14}{'forecasts':>11}{'predicted':>11}{'observed':>10}")
+    for slot in reliability_bins(probabilities, results):
+        if not slot.count:
+            continue
+        label = f"{slot.lower:.1f} to {slot.upper:.1f}"
+        print(f"{label:<14}{slot.count:>11}{slot.predicted:>11.4f}{slot.observed:>10.4f}")
+
+    print(f"\n{'outcome':<14}{'predicted':>11}{'observed':>10}")
+    rates = outcome_rates(probabilities, results)
+    for outcome, (predicted, observed) in zip(OUTCOMES, rates, strict=True):
+        print(f"{outcome:<14}{predicted:>11.4f}{observed:>10.4f}")
 
 
 if __name__ == "__main__":

@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 
 from plpd.evaluation.metrics import (
+    Outcomes,
     Probabilities,
     brier_score,
     log_loss,
@@ -48,9 +49,9 @@ class Scores:
     rps: float
 
 
-def score_walk_forward(
+def pooled_predictions(
     matches: pd.DataFrame, predictor: Predictor, *, min_train: int = 60
-) -> Scores:
+) -> tuple[Probabilities, Outcomes]:
     predicted = []
     actual = []
     for fold in walk_forward(matches, min_train=min_train):
@@ -62,11 +63,19 @@ def score_walk_forward(
 
     # Pooled rather than averaged per fold, so a week with 7 matches does not
     # weigh the same as one with 13.
-    probabilities = np.vstack(predicted)
-    results = np.concatenate(actual)
+    return np.vstack(predicted), np.concatenate(actual)
+
+
+def score(probabilities: Probabilities, results: Outcomes) -> Scores:
     return Scores(
         matches=len(results),
         brier=brier_score(probabilities, results),
         log_loss=log_loss(probabilities, results),
         rps=ranked_probability_score(probabilities, results),
     )
+
+
+def score_walk_forward(
+    matches: pd.DataFrame, predictor: Predictor, *, min_train: int = 60
+) -> Scores:
+    return score(*pooled_predictions(matches, predictor, min_train=min_train))
