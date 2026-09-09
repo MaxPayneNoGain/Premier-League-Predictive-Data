@@ -12,6 +12,7 @@ dependencies = [
     "pyarrow>=16.0",
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
+    "scipy>=1.14",
     "sqlalchemy>=2.0",
 ]
 
@@ -21,6 +22,7 @@ dev = [
     "pandas-stubs>=2.2",
     "pytest>=8.0",
     "ruff>=0.6",
+    "scipy-stubs>=1.14",
 ]
 
 [project.scripts]
