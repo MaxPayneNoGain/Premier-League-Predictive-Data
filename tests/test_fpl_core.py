@@ -2,7 +2,7 @@ import httpx
 import pytest
 
 from plpd.config import Settings
-from plpd.ingest import FplCoreSource, SourceError
+from plpd.ingest import FplCoreLegacySource, FplCoreSource, SourceError
 
 BODIES = {
     "players.csv": b"player_code,player_id,web_name,team_code,position\n118748,1,Vieira,3,MID\n",
@@ -55,3 +55,36 @@ def test_missing_column_names_itself(settings: Settings) -> None:
 
     with pytest.raises(SourceError, match="web_name"):
         source(handler, settings).fetch("2026-2027")
+
+
+MATCHES_BODY = (
+    b"gameweek,kickoff_time,home_team,away_team,match_id,home_score,away_score,finished\n"
+    b"8,2024-10-19 16:30:00,91,3,24-25-prem-afc-bournemouth-vs-arsenal,2,0,TRUE\n"
+)
+
+
+def matches_ok(_: httpx.Request) -> httpx.Response:
+    return httpx.Response(200, content=MATCHES_BODY)
+
+
+def legacy(handler: object, settings: Settings) -> FplCoreLegacySource:
+    transport = httpx.MockTransport(handler)  # type: ignore[arg-type]
+    return FplCoreLegacySource(settings, client=httpx.Client(transport=transport))
+
+
+def test_the_older_layout_takes_one_file_for_a_whole_season(settings: Settings) -> None:
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        return matches_ok(request)
+
+    files = legacy(handler, settings).fetch("2024-2025")
+
+    assert [file.name for file in files] == ["matches.csv"]
+    assert seen[0].endswith("/data/2024-2025/matches/matches.csv")
+
+
+def test_the_older_layout_has_no_gameweek_to_ask_for(settings: Settings) -> None:
+    with pytest.raises(SourceError, match="whole-season"):
+        legacy(matches_ok, settings).fetch("2024-2025", gameweek=3)

@@ -25,6 +25,16 @@ REQUIRED_COLUMNS = {
     "playerstats.csv": {"id", "status", "chance_of_playing_next_round", "news"},
     "fixtures.csv": {"gameweek", "kickoff_time", "home_team", "away_team", "match_id"},
     "playermatchstats.csv": {"player_id", "match_id", "minutes_played"},
+    "matches.csv": {
+        "gameweek",
+        "kickoff_time",
+        "home_team",
+        "away_team",
+        "match_id",
+        "home_score",
+        "away_score",
+        "finished",
+    },
 }
 
 
@@ -76,6 +86,24 @@ class FplCoreSource:
             raise SourceError(f"{name} is missing column(s): {', '.join(sorted(missing))}")
 
         return SourceFile(name=name, raw=response.content, frame=frame)
+
+
+class FplCoreLegacySource(FplCoreSource):
+    """Seasons upstream stored before it moved to the `By Gameweek` layout.
+
+    One file holds the whole finished season, so there is no gameweek to ask
+    for and no separate fixtures file to stitch together.
+    """
+
+    name = "fpl_core_legacy"
+
+    def fetch(self, season: str, gameweek: int | None = None) -> list[SourceFile]:
+        if gameweek is not None:
+            raise SourceError(f"{season} is stored as one whole-season file, not by gameweek")
+        return [self._fetch(self._matches_url(season), "matches.csv")]
+
+    def _matches_url(self, season: str) -> str:
+        return f"{RAW_BASE}/{self.settings.fpl_core_ref}/data/{season}/matches/matches.csv"
 
 
 def read_csv(raw: bytes) -> pd.DataFrame:

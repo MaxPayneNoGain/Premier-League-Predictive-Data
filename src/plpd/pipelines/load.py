@@ -12,12 +12,13 @@ from collections.abc import Sequence
 
 from plpd.config import Settings
 from plpd.db import build_engine, build_session_factory
-from plpd.ingest import FplCoreSource
+from plpd.ingest import FplCoreLegacySource, FplCoreSource
 from plpd.ingest.load import (
     archived_snapshots,
     fixture_paths,
     latest_snapshot,
     load_fixtures,
+    load_matches,
     load_players,
     load_teams,
 )
@@ -33,19 +34,25 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="Replay every archived pull for the season, oldest first.",
     )
+    parser.add_argument(
+        "--legacy",
+        action="store_true",
+        help="Load whole-season snapshots taken with plpd-snapshot --legacy.",
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)-7s %(message)s")
 
     settings = Settings()
     session_factory = build_session_factory(build_engine(settings))
+    source = FplCoreLegacySource.name if args.legacy else FplCoreSource.name
 
     for season in args.season or [settings.current_season]:
         with session_factory() as session, session.begin():
             if args.all:
-                snapshots = archived_snapshots(session, source=FplCoreSource.name, season=season)
+                snapshots = archived_snapshots(session, source=source, season=season)
             else:
-                newest = latest_snapshot(session, source=FplCoreSource.name, season=season)
+                newest = latest_snapshot(session, source=source, season=season)
                 snapshots = [newest] if newest is not None else []
 
             if not snapshots:
@@ -53,6 +60,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return 1
 
             for snapshot in snapshots:
+                if args.legacy:
+                    log.info(
+                        "snapshot %d: %d matches", snapshot.id, load_matches(session, snapshot)
+                    )
+                    continue
+
                 teams = load_teams(session, snapshot)
                 players = load_players(session, snapshot)
                 fixtures = load_fixtures(session, snapshot) if fixture_paths(snapshot) else 0

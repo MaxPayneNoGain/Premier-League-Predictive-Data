@@ -10,10 +10,13 @@ from plpd.db.tables import Fixture, Player, Snapshot, Team
 from plpd.ingest.load import (
     archived_snapshots,
     load_fixtures,
+    load_matches,
     load_players,
     load_teams,
+    to_bool,
     to_datetime,
     to_int,
+    tournament_of,
 )
 
 FETCHED_AT = datetime(2026, 8, 31, 8, 0, tzinfo=UTC)
@@ -73,6 +76,26 @@ PLAYERS = pd.DataFrame(
 )
 
 
+# The older layout: uppercase flags, plain integer codes, a space in the
+# timestamp, and no tournament column at all.
+MATCHES = pd.DataFrame(
+    [
+        {
+            "gameweek": "8",
+            "match_id": "24-25-prem-afc-bournemouth-vs-arsenal",
+            "kickoff_time": "2024-10-19 16:30:00",
+            "home_team": "91",
+            "away_team": "3",
+            "home_team_elo": "1702.37",
+            "away_team_elo": "1981.59",
+            "home_score": "2",
+            "away_score": "0",
+            "finished": "TRUE",
+        }
+    ]
+)
+
+
 def make_snapshot(
     session: Session,
     root: Path,
@@ -80,6 +103,8 @@ def make_snapshot(
     *,
     tag: str = "a",
     fetched_at: datetime = FETCHED_AT,
+    source: str = "fpl_core",
+    season: str = "2026-2027",
 ) -> Snapshot:
     destination = root / tag
     destination.mkdir(parents=True)
@@ -87,8 +112,8 @@ def make_snapshot(
         frame.to_parquet(destination / f"{name}.parquet", index=False)
 
     snapshot = Snapshot(
-        source="fpl_core",
-        season="2026-2027",
+        source=source,
+        season=season,
         fetched_at=fetched_at,
         source_ref="main",
         storage_uri=destination.as_posix(),
@@ -217,3 +242,56 @@ def test_a_replay_runs_oldest_first_so_the_newest_pull_wins(
     arsenal = session.get(Team, ("2026-2027", 1))
     assert arsenal is not None
     assert arsenal.short_name == "ARE"
+
+
+def test_a_whole_season_file_loads_with_its_competition_recovered(
+    session: Session, tmp_path: Path
+) -> None:
+    snapshot = make_snapshot(
+        session, tmp_path, {"matches": MATCHES}, source="fpl_core_legacy", season="2024-2025"
+    )
+
+    assert load_matches(session, snapshot) == 1
+
+    played = session.get(Fixture, "24-25-prem-afc-bournemouth-vs-arsenal")
+    assert played is not None
+    assert played.season == "2024-2025"
+    assert played.tournament == "prem"
+    assert (played.home_team_code, played.away_team_code) == (91, 3)
+    assert (played.home_score, played.away_score) == (2, 0)
+    assert played.finished
+
+
+def test_a_space_separated_kickoff_reads_as_utc() -> None:
+    assert to_datetime("2024-10-19 16:30:00") == datetime(2024, 10, 19, 16, 30, tzinfo=UTC)
+
+
+def test_an_uppercase_flag_is_read_as_a_boolean() -> None:
+    assert to_bool("TRUE") is True
+    assert to_bool("FALSE") is False
+
+
+def test_a_flag_that_is_neither_spelling_is_rejected() -> None:
+    with pytest.raises(ValueError, match="boolean spelling"):
+        to_bool("yes")
+
+
+def test_the_league_is_recovered_from_a_match_id() -> None:
+    assert tournament_of("24-25-prem-afc-bournemouth-vs-arsenal", "2024-2025") == "prem"
+
+
+def test_a_competition_whose_name_has_a_hyphen_survives() -> None:
+    cup = tournament_of("25-26-efl-cup-bristol-city-vs-fulham", "2025-2026")
+    europe = tournament_of("25-26-champions-league-atletico-madrid-vs-liverpool", "2025-2026")
+
+    assert (cup, europe) == ("efl-cup", "champions-league")
+
+
+def test_a_match_id_from_another_season_is_rejected() -> None:
+    with pytest.raises(ValueError, match="does not belong"):
+        tournament_of("24-25-prem-arsenal-vs-chelsea", "2025-2026")
+
+
+def test_an_unknown_competition_is_rejected() -> None:
+    with pytest.raises(ValueError, match="no known competition"):
+        tournament_of("24-25-friendly-arsenal-vs-chelsea", "2024-2025")
