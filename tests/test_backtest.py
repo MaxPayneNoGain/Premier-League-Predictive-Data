@@ -1,13 +1,20 @@
+import numpy as np
 import pandas as pd
 import pytest
 
-from plpd.evaluation import walk_forward
+from plpd.evaluation import score_walk_forward, walk_forward
 
 
 def matches(*rows: tuple[str, int, str]) -> pd.DataFrame:
     return pd.DataFrame(
         [
-            {"match_id": match_id, "gameweek": gameweek, "kickoff_time": pd.Timestamp(kickoff)}
+            {
+                "match_id": match_id,
+                "gameweek": gameweek,
+                "kickoff_time": pd.Timestamp(kickoff),
+                "home_goals": 2,
+                "away_goals": 1,
+            }
             for match_id, gameweek, kickoff in rows
         ]
     )
@@ -63,3 +70,27 @@ def test_folds_arrive_oldest_first() -> None:
 def test_a_nonsense_minimum_is_rejected() -> None:
     with pytest.raises(ValueError, match="at least 1"):
         list(walk_forward(season(4), min_train=0))
+
+
+def always_right(_: pd.DataFrame, test: pd.DataFrame) -> np.ndarray:
+    return np.tile([1.0, 0.0, 0.0], (len(test), 1))
+
+
+def test_a_predictor_that_is_always_right_scores_zero() -> None:
+    scores = score_walk_forward(season(12), always_right, min_train=10)
+
+    assert (scores.brier, scores.log_loss, scores.rps) == (0.0, 0.0, 0.0)
+
+
+def test_every_predicted_match_is_counted_once() -> None:
+    played = season(12)
+
+    scores = score_walk_forward(played, always_right, min_train=10)
+    folds = list(walk_forward(played, min_train=10))
+
+    assert scores.matches == sum(len(fold.test) for fold in folds)
+
+
+def test_a_season_too_short_to_learn_from_is_rejected() -> None:
+    with pytest.raises(ValueError, match="earlier matches"):
+        score_walk_forward(season(2), always_right, min_train=60)
