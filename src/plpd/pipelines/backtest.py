@@ -1,4 +1,4 @@
-"""Score the baselines walk-forward and print the table."""
+"""Score every predictor walk-forward and print the table."""
 
 import argparse
 import logging
@@ -15,13 +15,15 @@ from plpd.evaluation import (
     uniform,
 )
 from plpd.features import finished_matches, outcomes
+from plpd.models import fit, predict
 
 log = logging.getLogger("plpd.backtest")
 
-BASELINES: dict[str, Predictor] = {
+PREDICTORS: dict[str, Predictor] = {
     "uniform": lambda _, test: uniform(len(test)),
     "always home": lambda _, test: always_home(len(test)),
     "base rates": lambda train, test: base_rates(outcomes(train), len(test)),
+    "poisson": lambda train, test: predict(fit(train), test),
 }
 
 
@@ -41,8 +43,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         log.error("no finished %s matches are loaded - run plpd-load first", args.tournament)
         return 1
 
-    print(f"{'baseline':<14}{'matches':>9}{'Brier':>9}{'log loss':>11}{'RPS':>9}")
-    for name, predictor in BASELINES.items():
+    print(f"{'predictor':<14}{'matches':>9}{'Brier':>9}{'log loss':>11}{'RPS':>9}")
+    for name, predictor in PREDICTORS.items():
         scores = score_walk_forward(matches, predictor, min_train=args.min_train)
         print(
             f"{name:<14}{scores.matches:>9}{scores.brier:>9.4f}"
