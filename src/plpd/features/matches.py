@@ -24,6 +24,15 @@ COLUMNS = [
     "away_goals",
 ]
 
+ROUND_COLUMNS = [
+    "match_id",
+    "season",
+    "gameweek",
+    "kickoff_time",
+    "home_team_code",
+    "away_team_code",
+]
+
 PRICE_COLUMNS = ["home_odds", "draw_odds", "away_odds"]
 
 ODDS_COLUMNS = ["match_id", *PRICE_COLUMNS]
@@ -62,6 +71,53 @@ def finished_matches(session: Session, *, tournament: str = "prem") -> pd.DataFr
     return pd.DataFrame(rows, columns=COLUMNS)
 
 
+def round_fixtures(
+    session: Session, *, season: str, gameweek: int, tournament: str = "prem"
+) -> pd.DataFrame:
+    """Every fixture in one round, played or not, oldest first."""
+    statement = (
+        select(
+            Fixture.match_id,
+            Fixture.season,
+            Fixture.gameweek,
+            Fixture.kickoff_time,
+            Fixture.home_team_code,
+            Fixture.away_team_code,
+        )
+        .where(
+            Fixture.season == season,
+            Fixture.gameweek == gameweek,
+            Fixture.tournament == tournament,
+            Fixture.home_team_code.is_not(None),
+            Fixture.away_team_code.is_not(None),
+        )
+        .order_by(Fixture.kickoff_time)
+    )
+    rows = [dict(row) for row in session.execute(statement).mappings()]
+    return pd.DataFrame(rows, columns=ROUND_COLUMNS)
+
+
+def next_round(session: Session, *, season: str, tournament: str = "prem") -> int | None:
+    """The gameweek holding the soonest unplayed fixture, None once none are left.
+
+    Read off kickoff order, not the lowest unplayed gameweek number. A match
+    postponed into December would otherwise hold its round open until then.
+    """
+    statement = (
+        select(Fixture.gameweek)
+        .where(
+            Fixture.season == season,
+            Fixture.tournament == tournament,
+            Fixture.finished.is_(False),
+            Fixture.kickoff_time.is_not(None),
+        )
+        .order_by(Fixture.kickoff_time)
+        .limit(1)
+    )
+    gameweek = session.scalar(statement)
+    return None if gameweek is None else int(gameweek)
+
+
 def match_odds(session: Session, *, tournament: str = "prem") -> pd.DataFrame:
     """Decimal prices for one competition, at most one row per match.
 
@@ -83,10 +139,7 @@ def match_odds(session: Session, *, tournament: str = "prem") -> pd.DataFrame:
 
 
 def outcomes(matches: pd.DataFrame) -> npt.NDArray[np.int_]:
-    """Label each match 0 home win, 1 draw, 2 away win.
-
-    The order is deliberate: these are ordinal, and the ranked probability score
-    depends on a draw sitting between the two wins rather than beside them.
-    """
+    """Label each match 0 home win, 1 draw, 2 away win."""
+    # RPS needs draw between the two wins.
     margin = matches["home_goals"] - matches["away_goals"]
     return np.where(margin > 0, 0, np.where(margin == 0, 1, 2)).astype(np.int_)

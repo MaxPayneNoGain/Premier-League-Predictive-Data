@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 from sqlalchemy.orm import Session
 
 from plpd.db.tables import Fixture, Odds
-from plpd.features import finished_matches, match_odds, outcomes
+from plpd.features import finished_matches, match_odds, next_round, outcomes, round_fixtures
 
 LATER = datetime(2025, 8, 17, 14, 0, tzinfo=UTC)
 LATEST = datetime(2025, 8, 18, 14, 0, tzinfo=UTC)
@@ -117,3 +117,90 @@ def test_an_empty_price_result_still_has_the_columns(session: Session) -> None:
 
     assert frame.empty
     assert list(frame.columns) == ["match_id", "home_odds", "draw_odds", "away_odds"]
+
+
+def test_a_round_keeps_fixtures_that_have_already_been_played(session: Session) -> None:
+    add(session, "played")
+    add(session, "upcoming", finished=False, home_score=None, away_score=None, kickoff_time=LATER)
+
+    assert list(round_fixtures(session, season="2025-2026", gameweek=1)["match_id"]) == [
+        "played",
+        "upcoming",
+    ]
+
+
+def test_another_gameweek_is_left_out(session: Session) -> None:
+    add(session, "this-week")
+    add(session, "next-week", gameweek=2, kickoff_time=LATER)
+
+    assert list(round_fixtures(session, season="2025-2026", gameweek=1)["match_id"]) == [
+        "this-week"
+    ]
+
+
+def test_the_same_round_of_another_season_is_left_out(session: Session) -> None:
+    add(session, "this-season")
+    add(session, "last-season", season="2024-2025")
+
+    assert list(round_fixtures(session, season="2025-2026", gameweek=1)["match_id"]) == [
+        "this-season"
+    ]
+
+
+def test_a_round_leaves_out_clubs_outside_fpl(session: Session) -> None:
+    add(session, "league")
+    add(session, "european", tournament="champions-league", away_team_code=None)
+
+    assert list(round_fixtures(session, season="2025-2026", gameweek=1)["match_id"]) == ["league"]
+
+
+def test_a_round_comes_back_oldest_first(session: Session) -> None:
+    add(session, "sunday", kickoff_time=LATEST)
+    add(session, "saturday", kickoff_time=LATER)
+
+    assert list(round_fixtures(session, season="2025-2026", gameweek=1)["match_id"]) == [
+        "saturday",
+        "sunday",
+    ]
+
+
+def test_an_empty_round_still_has_the_columns(session: Session) -> None:
+    frame = round_fixtures(session, season="2025-2026", gameweek=1)
+
+    assert frame.empty
+    assert list(frame.columns) == [
+        "match_id",
+        "season",
+        "gameweek",
+        "kickoff_time",
+        "home_team_code",
+        "away_team_code",
+    ]
+
+
+def test_the_next_round_is_the_one_kicking_off_soonest(session: Session) -> None:
+    add(session, "played")
+    add(session, "upcoming", gameweek=2, finished=False, kickoff_time=LATER)
+    add(session, "later-still", gameweek=3, finished=False, kickoff_time=LATEST)
+
+    assert next_round(session, season="2025-2026") == 2
+
+
+def test_a_postponed_round_does_not_jump_the_queue(session: Session) -> None:
+    add(session, "postponed", gameweek=2, finished=False, kickoff_time=LATEST)
+    add(session, "on-time", gameweek=3, finished=False, kickoff_time=LATER)
+
+    assert next_round(session, season="2025-2026") == 3
+
+
+def test_no_round_is_next_once_everything_is_played(session: Session) -> None:
+    add(session, "played")
+
+    assert next_round(session, season="2025-2026") is None
+
+
+def test_a_fixture_without_a_kickoff_cannot_be_next(session: Session) -> None:
+    add(session, "unscheduled", gameweek=2, finished=False, kickoff_time=None)
+    add(session, "scheduled", gameweek=3, finished=False, kickoff_time=LATER)
+
+    assert next_round(session, season="2025-2026") == 3
