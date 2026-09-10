@@ -100,10 +100,13 @@ class FplCoreLegacySource(FplCoreSource):
     def fetch(self, season: str, gameweek: int | None = None) -> list[SourceFile]:
         if gameweek is not None:
             raise SourceError(f"{season} is stored as one whole-season file, not by gameweek")
-        return [self._fetch(self._matches_url(season), "matches.csv")]
+        return [
+            self._fetch(self._url(season, "teams/teams.csv"), "teams.csv"),
+            self._fetch(self._url(season, "matches/matches.csv"), "matches.csv"),
+        ]
 
-    def _matches_url(self, season: str) -> str:
-        return f"{RAW_BASE}/{self.settings.fpl_core_ref}/data/{season}/matches/matches.csv"
+    def _url(self, season: str, path: str) -> str:
+        return f"{RAW_BASE}/{self.settings.fpl_core_ref}/data/{season}/{path}"
 
 
 def read_csv(raw: bytes) -> pd.DataFrame:

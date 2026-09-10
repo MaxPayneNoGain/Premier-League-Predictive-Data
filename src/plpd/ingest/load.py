@@ -106,6 +106,10 @@ def fixture_paths(snapshot: Snapshot) -> list[Path]:
     return sorted(Path(snapshot.storage_uri).glob("GW*__fixtures.parquet"))
 
 
+def has_frame(snapshot: Snapshot, name: str) -> bool:
+    return (Path(snapshot.storage_uri) / f"{name}.parquet").exists()
+
+
 def read_frame(snapshot: Snapshot, name: str) -> pd.DataFrame:
     path = Path(snapshot.storage_uri) / f"{name}.parquet"
     if not path.exists():

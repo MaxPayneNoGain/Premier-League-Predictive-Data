@@ -63,7 +63,9 @@ MATCHES_BODY = (
 )
 
 
-def matches_ok(_: httpx.Request) -> httpx.Response:
+def matches_ok(request: httpx.Request) -> httpx.Response:
+    if request.url.path.endswith("teams.csv"):
+        return httpx.Response(200, content=BODIES["teams.csv"])
     return httpx.Response(200, content=MATCHES_BODY)
 
 
@@ -72,7 +74,7 @@ def legacy(handler: object, settings: Settings) -> FplCoreLegacySource:
     return FplCoreLegacySource(settings, client=httpx.Client(transport=transport))
 
 
-def test_the_older_layout_takes_one_file_for_a_whole_season(settings: Settings) -> None:
+def test_the_older_layout_takes_a_whole_season_per_file(settings: Settings) -> None:
     seen: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -81,8 +83,9 @@ def test_the_older_layout_takes_one_file_for_a_whole_season(settings: Settings) 
 
     files = legacy(handler, settings).fetch("2024-2025")
 
-    assert [file.name for file in files] == ["matches.csv"]
-    assert seen[0].endswith("/data/2024-2025/matches/matches.csv")
+    assert [file.name for file in files] == ["teams.csv", "matches.csv"]
+    assert any(url.endswith("/data/2024-2025/teams/teams.csv") for url in seen)
+    assert any(url.endswith("/data/2024-2025/matches/matches.csv") for url in seen)
 
 
 def test_the_older_layout_has_no_gameweek_to_ask_for(settings: Settings) -> None:

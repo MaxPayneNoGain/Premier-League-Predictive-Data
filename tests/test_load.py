@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from plpd.db.tables import Fixture, Player, Snapshot, Team
 from plpd.ingest.load import (
     archived_snapshots,
+    has_frame,
     load_fixtures,
     load_matches,
     load_players,
@@ -295,3 +296,12 @@ def test_a_match_id_from_another_season_is_rejected() -> None:
 def test_an_unknown_competition_is_rejected() -> None:
     with pytest.raises(ValueError, match="no known competition"):
         tournament_of("24-25-friendly-arsenal-vs-chelsea", "2024-2025")
+
+
+def test_a_snapshot_reports_which_frames_it_holds(session: Session, tmp_path: Path) -> None:
+    snapshot = make_snapshot(
+        session, tmp_path, {"matches": MATCHES}, source="fpl_core_legacy", season="2024-2025"
+    )
+
+    assert has_frame(snapshot, "matches")
+    assert not has_frame(snapshot, "teams")

@@ -16,6 +16,7 @@ from plpd.ingest import FplCoreLegacySource, FplCoreSource
 from plpd.ingest.load import (
     archived_snapshots,
     fixture_paths,
+    has_frame,
     latest_snapshot,
     load_fixtures,
     load_matches,
@@ -61,8 +62,15 @@ def main(argv: Sequence[str] | None = None) -> int:
 
             for snapshot in snapshots:
                 if args.legacy:
+                    # The earliest legacy snapshots archived matches only.
+                    legacy_teams = (
+                        load_teams(session, snapshot) if has_frame(snapshot, "teams") else 0
+                    )
                     log.info(
-                        "snapshot %d: %d matches", snapshot.id, load_matches(session, snapshot)
+                        "snapshot %d: %d teams, %d matches",
+                        snapshot.id,
+                        legacy_teams,
+                        load_matches(session, snapshot),
                     )
                     continue
 
