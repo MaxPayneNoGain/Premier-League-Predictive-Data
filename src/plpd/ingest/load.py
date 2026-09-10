@@ -6,7 +6,7 @@ here treats a blank as absent rather than as a zero-valued default.
 """
 
 from collections.abc import Hashable, Mapping
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -14,11 +14,18 @@ import pandas as pd
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from plpd.db.tables import Fixture, Player, Snapshot, Team
+from plpd.db.tables import Fixture, Odds, Player, Snapshot, Team
 from plpd.db.upsert import upsert
+from plpd.ingest.odds import BOOKMAKER
 
 # 2024-2025 writes these uppercase, later seasons write them capitalised.
 BOOLEANS = {"True": True, "TRUE": True, "False": False, "FALSE": False}
+
+ODDS_ALIASES = {
+    "Man United": "Man Utd",
+    "Nottm Forest": "Nott'm Forest",
+    "Tottenham": "Spurs",
+}
 
 TOURNAMENTS = ("champions-league", "conference-league", "efl-cup", "europa-league", "prem")
 
@@ -203,4 +210,67 @@ def load_matches(session: Session, snapshot: Snapshot) -> int:
         for row in read_frame(snapshot, "matches").to_dict(orient="records")
     ]
     upsert(session, Fixture, rows)
+    return len(rows)
+
+
+def _team_codes(session: Session, season: str) -> dict[str, int]:
+    return {
+        name: code
+        for name, code in session.execute(select(Team.name, Team.code).where(Team.season == season))
+    }
+
+
+def _match_ids(session: Session, season: str) -> dict[tuple[date, int, int], str]:
+    statement = select(
+        Fixture.match_id,
+        Fixture.kickoff_time,
+        Fixture.home_team_code,
+        Fixture.away_team_code,
+    ).where(Fixture.season == season, Fixture.tournament == "prem")
+    return {
+        (kickoff.date(), home, away): match_id
+        for match_id, kickoff, home, away in session.execute(statement)
+        if kickoff is not None and home is not None and away is not None
+    }
+
+
+def _club_code(name: str, codes: dict[str, int]) -> int:
+    club = ODDS_ALIASES.get(name, name)
+    if club not in codes:
+        raise ValueError(f"no team code for {name!r} - the odds source may have renamed a club")
+    return codes[club]
+
+
+def load_odds(session: Session, snapshot: Snapshot) -> int:
+    """Attach bookmaker prices to fixtures already loaded for the season.
+
+    The odds source names clubs where ours carries codes, so the two are matched
+    on the kickoff date and both team codes. A club it does not recognise raises
+    rather than silently dropping the match.
+    """
+    codes = _team_codes(session, snapshot.season)
+    if not codes:
+        raise ValueError(f"no teams loaded for {snapshot.season} - run plpd-load first")
+    fixtures = _match_ids(session, snapshot.season)
+
+    rows: list[dict[str, Any]] = []
+    for row in read_frame(snapshot, "odds").to_dict(orient="records"):
+        if not (row["OddHome"] and row["OddDraw"] and row["OddAway"]):
+            continue
+        home = _club_code(str(row["HomeTeam"]), codes)
+        away = _club_code(str(row["AwayTeam"]), codes)
+        match_id = fixtures.get((pd.Timestamp(row["MatchDate"]).date(), home, away))
+        if match_id is None:
+            continue
+        rows.append(
+            {
+                "match_id": match_id,
+                "bookmaker": BOOKMAKER,
+                "home_win": to_float(row["OddHome"]),
+                "draw": to_float(row["OddDraw"]),
+                "away_win": to_float(row["OddAway"]),
+            }
+        )
+
+    upsert(session, Odds, rows)
     return len(rows)

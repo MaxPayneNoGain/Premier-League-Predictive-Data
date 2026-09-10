@@ -81,6 +81,23 @@ class Player(Base):
     __table_args__ = (Index("ix_players_code", "code"),)
 
 
+class Odds(Base):
+    """Bookmaker prices for one match, as decimal odds.
+
+    Stored as odds rather than probabilities. Turning a price into a probability
+    means deciding how to strip the bookmaker's margin, and that decision belongs
+    where the probabilities are used.
+    """
+
+    __tablename__ = "odds"
+
+    match_id: Mapped[str] = mapped_column(String(MATCH_ID_LEN), primary_key=True)
+    bookmaker: Mapped[str] = mapped_column(String(32))
+    home_win: Mapped[float] = mapped_column(Float)
+    draw: Mapped[float] = mapped_column(Float)
+    away_win: Mapped[float] = mapped_column(Float)
+
+
 class Fixture(Base):
     """A scheduled or completed match in any competition.
 

@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     # A branch follows upstream; a commit SHA freezes it, which is what a
     # reproducible backfill needs.
     fpl_core_ref: str = "main"
+    odds_ref: str = "main"
 
     @field_validator("current_season")
     @classmethod

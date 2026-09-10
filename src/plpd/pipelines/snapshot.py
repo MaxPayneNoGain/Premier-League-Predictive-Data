@@ -10,7 +10,13 @@ from collections.abc import Sequence
 
 from plpd.config import Settings
 from plpd.db import build_engine, build_session_factory
-from plpd.ingest import FplCoreLegacySource, FplCoreSource, SourceError, archive
+from plpd.ingest import (
+    ClubFootballOddsSource,
+    FplCoreLegacySource,
+    FplCoreSource,
+    SourceError,
+    archive,
+)
 
 log = logging.getLogger("plpd.snapshot")
 
@@ -19,17 +25,29 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="plpd-snapshot")
     parser.add_argument("--season", action="append", metavar="YYYY-YYYY")
     parser.add_argument("--gameweek", type=int)
-    parser.add_argument(
+    layout = parser.add_mutually_exclusive_group()
+    layout.add_argument(
         "--legacy",
         action="store_true",
         help="Read the older layout, one whole-season file instead of gameweek pulls.",
+    )
+    layout.add_argument(
+        "--odds",
+        action="store_true",
+        help="Fetch bookmaker prices for the season instead of the FPL tables.",
     )
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)-7s %(message)s")
 
     settings = Settings()
-    source = FplCoreLegacySource(settings) if args.legacy else FplCoreSource(settings)
+    source: FplCoreSource | ClubFootballOddsSource
+    if args.odds:
+        source = ClubFootballOddsSource(settings)
+    elif args.legacy:
+        source = FplCoreLegacySource(settings)
+    else:
+        source = FplCoreSource(settings)
     session_factory = build_session_factory(build_engine(settings))
 
     for season in args.season or [settings.current_season]:

@@ -6,12 +6,13 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from plpd.db.tables import Fixture, Player, Snapshot, Team
+from plpd.db.tables import Fixture, Odds, Player, Snapshot, Team
 from plpd.ingest.load import (
     archived_snapshots,
     has_frame,
     load_fixtures,
     load_matches,
+    load_odds,
     load_players,
     load_teams,
     to_bool,
@@ -305,3 +306,91 @@ def test_a_snapshot_reports_which_frames_it_holds(session: Session, tmp_path: Pa
 
     assert has_frame(snapshot, "matches")
     assert not has_frame(snapshot, "teams")
+
+
+ODDS_TEAMS = pd.DataFrame(
+    [
+        {"code": "3", "id": "1", "name": "Arsenal", "short_name": "ARS"},
+        {"code": "6", "id": "2", "name": "Spurs", "short_name": "TOT"},
+    ]
+)
+
+ODDS_FIXTURES = pd.DataFrame(
+    [
+        {
+            "gameweek": "4",
+            "tournament": "prem",
+            "match_id": "26-27-prem-arsenal-vs-tottenham-hotspur",
+            "kickoff_time": "2026-09-12T16:30:00",
+            "home_team": "3.0",
+            "away_team": "6.0",
+            "home_team_elo": "",
+            "away_team_elo": "",
+            "home_score": "2.0",
+            "away_score": "1.0",
+            "finished": "True",
+        }
+    ]
+)
+
+ODDS_ROWS = pd.DataFrame(
+    [
+        {
+            "Division": "E0",
+            "MatchDate": "2026-09-12",
+            "HomeTeam": "Arsenal",
+            "AwayTeam": "Tottenham",
+            "OddHome": "1.75",
+            "OddDraw": "3.90",
+            "OddAway": "4.20",
+        }
+    ]
+)
+
+
+def load_a_season(session: Session, root: Path) -> None:
+    load_teams(session, make_snapshot(session, root, {"teams": ODDS_TEAMS}, tag="t"))
+    load_fixtures(session, make_snapshot(session, root, {"GW4__fixtures": ODDS_FIXTURES}, tag="f"))
+
+
+def test_odds_reach_their_fixture_through_the_club_aliases(
+    session: Session, tmp_path: Path
+) -> None:
+    load_a_season(session, tmp_path)
+
+    assert load_odds(session, make_snapshot(session, tmp_path, {"odds": ODDS_ROWS}, tag="o")) == 1
+
+    priced = session.get(Odds, "26-27-prem-arsenal-vs-tottenham-hotspur")
+    assert priced is not None
+    assert (priced.home_win, priced.draw, priced.away_win) == (1.75, 3.90, 4.20)
+    assert priced.bookmaker == "bet365"
+
+
+def test_a_club_the_odds_source_renamed_stops_the_load(session: Session, tmp_path: Path) -> None:
+    load_a_season(session, tmp_path)
+    strange = ODDS_ROWS.copy()
+    strange.loc[0, "AwayTeam"] = "Real Madrid"
+
+    with pytest.raises(ValueError, match="no team code"):
+        load_odds(session, make_snapshot(session, tmp_path, {"odds": strange}, tag="o"))
+
+
+def test_odds_need_the_season_teams_loaded_first(session: Session, tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="no teams loaded"):
+        load_odds(session, make_snapshot(session, tmp_path, {"odds": ODDS_ROWS}, tag="o"))
+
+
+def test_a_match_with_no_price_is_left_alone(session: Session, tmp_path: Path) -> None:
+    load_a_season(session, tmp_path)
+    blank = ODDS_ROWS.copy()
+    blank.loc[0, "OddDraw"] = ""
+
+    assert load_odds(session, make_snapshot(session, tmp_path, {"odds": blank}, tag="o")) == 0
+
+
+def test_a_priced_match_we_never_loaded_is_skipped(session: Session, tmp_path: Path) -> None:
+    load_a_season(session, tmp_path)
+    elsewhere = ODDS_ROWS.copy()
+    elsewhere.loc[0, "MatchDate"] = "2026-09-19"
+
+    assert load_odds(session, make_snapshot(session, tmp_path, {"odds": elsewhere}, tag="o")) == 0

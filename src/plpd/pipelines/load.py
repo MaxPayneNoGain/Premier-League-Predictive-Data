@@ -12,7 +12,7 @@ from collections.abc import Sequence
 
 from plpd.config import Settings
 from plpd.db import build_engine, build_session_factory
-from plpd.ingest import FplCoreLegacySource, FplCoreSource
+from plpd.ingest import ClubFootballOddsSource, FplCoreLegacySource, FplCoreSource
 from plpd.ingest.load import (
     archived_snapshots,
     fixture_paths,
@@ -20,6 +20,7 @@ from plpd.ingest.load import (
     latest_snapshot,
     load_fixtures,
     load_matches,
+    load_odds,
     load_players,
     load_teams,
 )
@@ -35,10 +36,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="Replay every archived pull for the season, oldest first.",
     )
-    parser.add_argument(
+    layout = parser.add_mutually_exclusive_group()
+    layout.add_argument(
         "--legacy",
         action="store_true",
         help="Load whole-season snapshots taken with plpd-snapshot --legacy.",
+    )
+    layout.add_argument(
+        "--odds",
+        action="store_true",
+        help="Load bookmaker prices taken with plpd-snapshot --odds.",
     )
     args = parser.parse_args(argv)
 
@@ -46,7 +53,12 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     settings = Settings()
     session_factory = build_session_factory(build_engine(settings))
-    source = FplCoreLegacySource.name if args.legacy else FplCoreSource.name
+    if args.odds:
+        source = ClubFootballOddsSource.name
+    elif args.legacy:
+        source = FplCoreLegacySource.name
+    else:
+        source = FplCoreSource.name
 
     for season in args.season or [settings.current_season]:
         with session_factory() as session, session.begin():
@@ -61,6 +73,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return 1
 
             for snapshot in snapshots:
+                if args.odds:
+                    log.info("snapshot %d: %d odds", snapshot.id, load_odds(session, snapshot))
+                    continue
+
                 if args.legacy:
                     # The earliest legacy snapshots archived matches only.
                     legacy_teams = (
