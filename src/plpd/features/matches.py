@@ -11,7 +11,7 @@ import pandas as pd
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from plpd.db.tables import Fixture
+from plpd.db.tables import Fixture, Odds
 
 COLUMNS = [
     "match_id",
@@ -23,6 +23,10 @@ COLUMNS = [
     "home_goals",
     "away_goals",
 ]
+
+PRICE_COLUMNS = ["home_odds", "draw_odds", "away_odds"]
+
+ODDS_COLUMNS = ["match_id", *PRICE_COLUMNS]
 
 
 def finished_matches(session: Session, *, tournament: str = "prem") -> pd.DataFrame:
@@ -56,6 +60,26 @@ def finished_matches(session: Session, *, tournament: str = "prem") -> pd.DataFr
     )
     rows = [dict(row) for row in session.execute(statement).mappings()]
     return pd.DataFrame(rows, columns=COLUMNS)
+
+
+def match_odds(session: Session, *, tournament: str = "prem") -> pd.DataFrame:
+    """Decimal prices for one competition, at most one row per match.
+
+    Joined through the fixtures so the tournament filter means the same thing
+    here as it does for the matches themselves.
+    """
+    statement = (
+        select(
+            Odds.match_id,
+            Odds.home_win.label("home_odds"),
+            Odds.draw.label("draw_odds"),
+            Odds.away_win.label("away_odds"),
+        )
+        .join(Fixture, Fixture.match_id == Odds.match_id)
+        .where(Fixture.tournament == tournament)
+    )
+    rows = [dict(row) for row in session.execute(statement).mappings()]
+    return pd.DataFrame(rows, columns=ODDS_COLUMNS)
 
 
 def outcomes(matches: pd.DataFrame) -> npt.NDArray[np.int_]:

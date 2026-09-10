@@ -15,6 +15,7 @@ from plpd.evaluation.calibration import (
     outcome_rates,
     reliability_bins,
 )
+from plpd.evaluation.market import devig, overround, prices
 from plpd.evaluation.metrics import (
     Outcomes,
     Probabilities,
@@ -35,9 +36,12 @@ __all__ = [
     "base_rates",
     "brier_score",
     "decompose",
+    "devig",
     "log_loss",
     "outcome_rates",
+    "overround",
     "pooled_predictions",
+    "prices",
     "ranked_probability_score",
     "reliability_bins",
     "score",

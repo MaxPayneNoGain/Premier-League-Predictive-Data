@@ -1,3 +1,3 @@
-from plpd.features.matches import finished_matches, outcomes
+from plpd.features.matches import PRICE_COLUMNS, finished_matches, match_odds, outcomes
 
-__all__ = ["finished_matches", "outcomes"]
+__all__ = ["PRICE_COLUMNS", "finished_matches", "match_odds", "outcomes"]

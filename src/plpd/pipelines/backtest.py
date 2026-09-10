@@ -11,35 +11,46 @@ from plpd.evaluation import (
     Outcomes,
     Predictor,
     Probabilities,
+    Scores,
     always_home,
     base_rates,
     decompose,
+    devig,
     outcome_rates,
+    overround,
     pooled_predictions,
+    prices,
     reliability_bins,
     score,
     uniform,
 )
-from plpd.features import finished_matches, outcomes
+from plpd.features import PRICE_COLUMNS, finished_matches, match_odds, outcomes
+from plpd.ingest.odds import BOOKMAKER
 from plpd.models import HALF_LIFE_DAYS, SHRINKAGE_WEIGHT, fit, predict, shrink
 
 log = logging.getLogger("plpd.backtest")
 
+NAIVE = "base rates"
+
+BEST = "dixon-coles shrunk"
+
 PREDICTORS: dict[str, Predictor] = {
     "uniform": lambda _, test: uniform(len(test)),
     "always home": lambda _, test: always_home(len(test)),
-    "base rates": lambda train, test: base_rates(outcomes(train), len(test)),
+    NAIVE: lambda train, test: base_rates(outcomes(train), len(test)),
     "poisson": lambda train, test: predict(fit(train), test),
     "dixon-coles": lambda train, test: predict(fit(train, correlation=True), test),
     "dixon-coles decayed": lambda train, test: predict(
         fit(train, correlation=True, half_life=HALF_LIFE_DAYS), test
     ),
-    "dixon-coles shrunk": lambda train, test: shrink(
+    BEST: lambda train, test: shrink(
         predict(fit(train, correlation=True, half_life=HALF_LIFE_DAYS), test),
         base_rates(outcomes(train), len(test)),
         SHRINKAGE_WEIGHT,
     ),
 }
+
+MARKET = f"{BOOKMAKER} de-vigged"
 
 OUTCOMES = ("home", "draw", "away")
 
@@ -55,28 +66,44 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    if args.calibration is not None and args.calibration not in PREDICTORS:
-        parser.error(f"unknown predictor {args.calibration!r}, pick from {', '.join(PREDICTORS)}")
+    known = [*PREDICTORS, MARKET]
+    if args.calibration is not None and args.calibration not in known:
+        parser.error(f"unknown predictor {args.calibration!r}, pick from {', '.join(known)}")
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)-7s %(message)s")
 
     settings = Settings()
     with build_session_factory(build_engine(settings))() as session:
         matches = finished_matches(session, tournament=args.tournament)
+        odds = match_odds(session, tournament=args.tournament)
 
     if matches.empty:
         log.error("no finished %s matches are loaded - run plpd-load first", args.tournament)
         return 1
 
+    matches = matches.merge(odds, on="match_id", how="left")
+    priced = int(matches[PRICE_COLUMNS].notna().all(axis=1).sum())
+    predictors = dict(PREDICTORS)
+    if priced == len(matches):
+        predictors[MARKET] = lambda _, test: devig(prices(test))
+    elif priced:
+        # Scoring the market on the matches it happens to cover would put a row
+        # in the table that was not measured on the same fixtures as the rest.
+        log.warning("odds cover %d of %d matches, leaving the market out", priced, len(matches))
+    else:
+        log.warning("no odds are loaded - run plpd-load --odds to score the market")
+
     chosen = None
     uncertainty = 0.0
+    scored: dict[str, Scores] = {}
     print(
         f"{'predictor':<22}{'matches':>9}{'Brier':>9}{'log loss':>11}"
         f"{'RPS':>9}{'reliability':>13}{'resolution':>12}"
     )
-    for name, predictor in PREDICTORS.items():
+    for name, predictor in predictors.items():
         probabilities, results = pooled_predictions(matches, predictor, min_train=args.min_train)
         scores = score(probabilities, results)
+        scored[name] = scores
         parts = decompose(probabilities, results)
         uncertainty = parts.uncertainty
         print(
@@ -89,10 +116,30 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     print(f"\nuncertainty {uncertainty:.4f}, set by the results alone and equal for every row")
 
+    if MARKET in predictors:
+        margin = overround(prices(matches)).mean()
+        print(f"bookmaker margin {margin:.2%} on average, taken out before scoring")
+        _print_gap(scored)
+
     if chosen is not None:
         _print_calibration(*chosen, name=str(args.calibration))
 
     return 0
+
+
+def _print_gap(scored: dict[str, Scores]) -> None:
+    naive, model, market = scored[NAIVE], scored[BEST], scored[MARKET]
+    if naive.rps <= market.rps:
+        return
+
+    print(f"\nshare of the distance from {NAIVE} to {MARKET} that {BEST} covers")
+    metrics = (
+        ("Brier", naive.brier, model.brier, market.brier),
+        ("log loss", naive.log_loss, model.log_loss, market.log_loss),
+        ("RPS", naive.rps, model.rps, market.rps),
+    )
+    for label, floor, reached, target in metrics:
+        print(f"{label:<14}{(floor - reached) / (floor - target):>10.0%}")
 
 
 def _print_calibration(probabilities: Probabilities, results: Outcomes, *, name: str) -> None:
