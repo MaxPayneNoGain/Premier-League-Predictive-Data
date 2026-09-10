@@ -21,7 +21,7 @@ from plpd.evaluation import (
     uniform,
 )
 from plpd.features import finished_matches, outcomes
-from plpd.models import HALF_LIFE_DAYS, fit, predict
+from plpd.models import HALF_LIFE_DAYS, SHRINKAGE_WEIGHT, fit, predict, shrink
 
 log = logging.getLogger("plpd.backtest")
 
@@ -33,6 +33,11 @@ PREDICTORS: dict[str, Predictor] = {
     "dixon-coles": lambda train, test: predict(fit(train, correlation=True), test),
     "dixon-coles decayed": lambda train, test: predict(
         fit(train, correlation=True, half_life=HALF_LIFE_DAYS), test
+    ),
+    "dixon-coles shrunk": lambda train, test: shrink(
+        predict(fit(train, correlation=True, half_life=HALF_LIFE_DAYS), test),
+        base_rates(outcomes(train), len(test)),
+        SHRINKAGE_WEIGHT,
     ),
 }
 
