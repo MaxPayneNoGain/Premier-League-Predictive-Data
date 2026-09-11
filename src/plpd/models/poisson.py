@@ -21,6 +21,10 @@ HALF_LIFE_DAYS = 240.0
 
 RHO_BOUNDS = (-0.3, 0.3)
 
+# Three matches barely constrain a club, so the first time it fails to score
+# its attack runs toward minus infinity.
+RIDGE_PENALTY = 1.0
+
 # The optimiser can try a rho that drives tau non-positive on its way to a fit.
 TAU_FLOOR = 1e-10
 
@@ -104,6 +108,7 @@ def _negative_log_likelihood(
     home_goals: Vector,
     away_goals: Vector,
     weights: Vector,
+    penalty: float,
 ) -> float:
     attack, defence, home_advantage, intercept, rho = _unpack(params, teams)
     log_home, log_away = _log_rates(attack, defence, home_advantage, intercept, home, away)
@@ -115,11 +120,18 @@ def _negative_log_likelihood(
         np.sum(weights * (home_rate - home_goals * log_home))
         + np.sum(weights * (away_rate - away_goals * log_away))
         - np.sum(weights * np.log(np.clip(tau, TAU_FLOOR, None)))
+        # Taken over the unpacked strengths, so the team whose value is derived
+        # from the others is penalised alongside them.
+        + penalty * float(attack @ attack + defence @ defence)
     )
 
 
 def fit(
-    matches: pd.DataFrame, *, correlation: bool = False, half_life: float | None = None
+    matches: pd.DataFrame,
+    *,
+    correlation: bool = False,
+    half_life: float | None = None,
+    penalty: float = RIDGE_PENALTY,
 ) -> PoissonModel:
     if matches.empty:
         raise ValueError("a Poisson model needs at least one match to fit")
@@ -145,7 +157,7 @@ def fit(
     fitted = minimize(
         _negative_log_likelihood,
         start,
-        args=(len(teams), home, away, home_goals, away_goals, weights),
+        args=(len(teams), home, away, home_goals, away_goals, weights, penalty),
         method="L-BFGS-B",
         bounds=bounds,
     )

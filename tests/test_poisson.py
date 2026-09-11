@@ -224,3 +224,22 @@ def test_a_half_life_must_be_positive() -> None:
 def test_decay_needs_a_kickoff_time() -> None:
     with pytest.raises(ValueError, match="kickoff_time"):
         fit(synthetic(), half_life=30)
+
+
+NEWCOMER = 15
+
+
+def test_a_club_that_has_never_scored_does_not_run_away() -> None:
+    matches = pd.concat([synthetic(), league([(STRONG, NEWCOMER, 3, 0)])], ignore_index=True)
+
+    model = fit(matches, correlation=True)
+
+    assert abs(model.attack[model.teams[NEWCOMER]]) < 3.0
+
+
+def test_a_club_that_has_never_conceded_does_not_run_away() -> None:
+    matches = pd.concat([synthetic(), league([(NEWCOMER, STRONG, 3, 0)])], ignore_index=True)
+
+    model = fit(matches, correlation=True)
+
+    assert abs(model.defence[model.teams[NEWCOMER]]) < 3.0
