@@ -26,13 +26,14 @@ from plpd.evaluation import (
 )
 from plpd.features import PRICE_COLUMNS, finished_matches, match_odds, outcomes
 from plpd.ingest.odds import BOOKMAKER
-from plpd.models import HALF_LIFE_DAYS, SHRINKAGE_WEIGHT, fit, predict, shrink
+from plpd.models import HALF_LIFE_DAYS, fit, predict
+from plpd.predictions import MODEL, probabilities
 
 log = logging.getLogger("plpd.backtest")
 
 NAIVE = "base rates"
 
-BEST = "dixon-coles shrunk"
+BEST = MODEL
 
 PREDICTORS: dict[str, Predictor] = {
     "uniform": lambda _, test: uniform(len(test)),
@@ -43,11 +44,7 @@ PREDICTORS: dict[str, Predictor] = {
     "dixon-coles decayed": lambda train, test: predict(
         fit(train, correlation=True, half_life=HALF_LIFE_DAYS), test
     ),
-    BEST: lambda train, test: shrink(
-        predict(fit(train, correlation=True, half_life=HALF_LIFE_DAYS), test),
-        base_rates(outcomes(train), len(test)),
-        SHRINKAGE_WEIGHT,
-    ),
+    BEST: probabilities,
 }
 
 MARKET = f"{BOOKMAKER} de-vigged"

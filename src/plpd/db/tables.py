@@ -98,6 +98,32 @@ class Odds(Base):
     away_win: Mapped[float] = mapped_column(Float)
 
 
+class Prediction(Base):
+    """One model's prediction for one match. Insert only, never updated."""
+
+    __tablename__ = "predictions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    match_id: Mapped[str] = mapped_column(String(MATCH_ID_LEN))
+    model: Mapped[str] = mapped_column(String(32))
+    predicted_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+
+    # The last kickoff in the training window.
+    trained_through: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+
+    home_win: Mapped[float] = mapped_column(Float)
+    draw: Mapped[float] = mapped_column(Float)
+    away_win: Mapped[float] = mapped_column(Float)
+    home_xg: Mapped[float] = mapped_column(Float)
+    away_xg: Mapped[float] = mapped_column(Float)
+    rho: Mapped[float] = mapped_column(Float)
+
+    __table_args__ = (
+        UniqueConstraint("match_id", "model", "predicted_at", name="uq_predictions_run"),
+        Index("ix_predictions_match_id", "match_id"),
+    )
+
+
 class Fixture(Base):
     """A scheduled or completed match in any competition.
 
