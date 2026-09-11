@@ -21,7 +21,11 @@ from plpd.ingest.odds import BOOKMAKER
 # 2024-2025 writes these uppercase, later seasons write them capitalised.
 BOOLEANS = {"True": True, "TRUE": True, "False": False, "FALSE": False}
 
+# The odds source drops the suffix the promoted clubs carry in FPL.
 ODDS_ALIASES = {
+    "Coventry": "Coventry City",
+    "Hull": "Hull City",
+    "Ipswich": "Ipswich Town",
     "Man United": "Man Utd",
     "Nottm Forest": "Nott'm Forest",
     "Tottenham": "Spurs",

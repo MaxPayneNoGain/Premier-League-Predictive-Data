@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from plpd.db.tables import Fixture, Odds, Player, Snapshot, Team
 from plpd.ingest.load import (
+    _club_code,
     archived_snapshots,
     has_frame,
     load_fixtures,
@@ -394,3 +395,9 @@ def test_a_priced_match_we_never_loaded_is_skipped(session: Session, tmp_path: P
     elsewhere.loc[0, "MatchDate"] = "2026-09-19"
 
     assert load_odds(session, make_snapshot(session, tmp_path, {"odds": elsewhere}, tag="o")) == 0
+
+
+def test_the_promoted_clubs_keep_the_suffix_the_odds_source_drops() -> None:
+    codes = {"Coventry City": 3, "Hull City": 8, "Ipswich Town": 40}
+
+    assert [_club_code(name, codes) for name in ("Coventry", "Hull", "Ipswich")] == [3, 8, 40]
