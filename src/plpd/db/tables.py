@@ -10,6 +10,7 @@ from sqlalchemy import (
     TIMESTAMP,
     Boolean,
     Float,
+    ForeignKey,
     Index,
     Integer,
     String,
@@ -50,6 +51,22 @@ class Snapshot(Base):
         # storing the same pull.
         UniqueConstraint("source", "season", "content_hash", name="uq_snapshots_content"),
         Index("ix_snapshots_source_fetched_at", "source", "fetched_at"),
+    )
+
+
+class SnapshotFile(Base):
+    __tablename__ = "snapshot_files"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    snapshot_id: Mapped[int] = mapped_column(ForeignKey("snapshots.id"))
+    name: Mapped[str] = mapped_column(String(64))
+    content_hash: Mapped[str] = mapped_column(String(64))
+    storage_uri: Mapped[str] = mapped_column(Text)
+    row_count: Mapped[int] = mapped_column(Integer)
+
+    __table_args__ = (
+        UniqueConstraint("snapshot_id", "name", name="uq_snapshot_files_name"),
+        Index("ix_snapshot_files_content_hash", "content_hash"),
     )
 
 
