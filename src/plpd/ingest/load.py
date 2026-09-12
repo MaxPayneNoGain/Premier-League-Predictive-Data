@@ -7,14 +7,13 @@ here treats a blank as absent rather than as a zero-valued default.
 
 from collections.abc import Hashable, Mapping
 from datetime import UTC, date, datetime
-from pathlib import Path
 from typing import Any
 
 import pandas as pd
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from plpd.db.tables import Fixture, Odds, Player, Snapshot, Team
+from plpd.db.tables import Fixture, Odds, Player, Snapshot, SnapshotFile, Team
 from plpd.db.upsert import upsert
 from plpd.ingest.odds import BOOKMAKER
 
@@ -111,21 +110,32 @@ def archived_snapshots(session: Session, *, source: str, season: str) -> list[Sn
     )
 
 
-def fixture_paths(snapshot: Snapshot) -> list[Path]:
+def indexed_files(session: Session, snapshot: Snapshot) -> dict[str, str]:
+    rows = session.scalars(select(SnapshotFile).where(SnapshotFile.snapshot_id == snapshot.id))
+    return {row.name: row.storage_uri for row in rows}
+
+
+def has_frame(session: Session, snapshot: Snapshot, name: str) -> bool:
+    return name in indexed_files(session, snapshot)
+
+
+def read_frame(session: Session, snapshot: Snapshot, name: str) -> pd.DataFrame:
+    uri = indexed_files(session, snapshot).get(name)
+    if uri is None:
+        raise FileNotFoundError(f"snapshot {snapshot.id} has no {name}")
+    return pd.read_parquet(uri)
+
+
+def fixture_names(session: Session, snapshot: Snapshot) -> list[str]:
     # A pull made without --gameweek archives the season files only, so callers
     # need to be able to ask before loading rather than handle a failure.
-    return sorted(Path(snapshot.storage_uri).glob("GW*__fixtures.parquet"))
+    indexed = indexed_files(session, snapshot)
+    return sorted(n for n in indexed if n.startswith("GW") and n.endswith("__fixtures"))
 
 
-def has_frame(snapshot: Snapshot, name: str) -> bool:
-    return (Path(snapshot.storage_uri) / f"{name}.parquet").exists()
-
-
-def read_frame(snapshot: Snapshot, name: str) -> pd.DataFrame:
-    path = Path(snapshot.storage_uri) / f"{name}.parquet"
-    if not path.exists():
-        raise FileNotFoundError(f"snapshot {snapshot.id} has no {name}.parquet at {path}")
-    return pd.read_parquet(path)
+def fixture_frames(session: Session, snapshot: Snapshot) -> list[pd.DataFrame]:
+    indexed = indexed_files(session, snapshot)
+    return [pd.read_parquet(indexed[name]) for name in fixture_names(session, snapshot)]
 
 
 def load_teams(session: Session, snapshot: Snapshot) -> int:
@@ -137,7 +147,7 @@ def load_teams(session: Session, snapshot: Snapshot) -> int:
             "name": row["name"],
             "short_name": row["short_name"],
         }
-        for row in read_frame(snapshot, "teams").to_dict(orient="records")
+        for row in read_frame(session, snapshot, "teams").to_dict(orient="records")
     ]
     upsert(session, Team, rows)
     return len(rows)
@@ -155,7 +165,7 @@ def load_players(session: Session, snapshot: Snapshot) -> int:
             "team_code": to_int(row["team_code"]),
             "position": row["position"],
         }
-        for row in read_frame(snapshot, "players").to_dict(orient="records")
+        for row in read_frame(session, snapshot, "players").to_dict(orient="records")
     ]
     upsert(session, Player, rows)
     return len(rows)
@@ -184,16 +194,14 @@ def load_fixtures(session: Session, snapshot: Snapshot) -> int:
     The team columns carry codes rather than FPL ids, and the file has no season
     column, so that comes from the snapshot.
     """
-    paths = fixture_paths(snapshot)
-    if not paths:
-        raise FileNotFoundError(
-            f"snapshot {snapshot.id} archived no gameweek fixtures under {snapshot.storage_uri}"
-        )
+    frames = fixture_frames(session, snapshot)
+    if not frames:
+        raise FileNotFoundError(f"snapshot {snapshot.id} archived no gameweek fixtures")
 
     rows: list[dict[str, Any]] = [
         _fixture_row(row, season=snapshot.season, tournament=row["tournament"])
-        for path in paths
-        for row in pd.read_parquet(path).to_dict(orient="records")
+        for frame in frames
+        for row in frame.to_dict(orient="records")
     ]
     upsert(session, Fixture, rows)
     return len(rows)
@@ -211,7 +219,7 @@ def load_matches(session: Session, snapshot: Snapshot) -> int:
             season=snapshot.season,
             tournament=tournament_of(row["match_id"], snapshot.season),
         )
-        for row in read_frame(snapshot, "matches").to_dict(orient="records")
+        for row in read_frame(session, snapshot, "matches").to_dict(orient="records")
     ]
     upsert(session, Fixture, rows)
     return len(rows)
@@ -258,7 +266,7 @@ def load_odds(session: Session, snapshot: Snapshot) -> int:
     fixtures = _match_ids(session, snapshot.season)
 
     rows: list[dict[str, Any]] = []
-    for row in read_frame(snapshot, "odds").to_dict(orient="records"):
+    for row in read_frame(session, snapshot, "odds").to_dict(orient="records"):
         if not (row["OddHome"] and row["OddDraw"] and row["OddAway"]):
             continue
         home = _club_code(str(row["HomeTeam"]), codes)

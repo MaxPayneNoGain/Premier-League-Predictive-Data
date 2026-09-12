@@ -11,7 +11,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from plpd.db.tables import Snapshot
+from plpd.db.tables import Snapshot, SnapshotFile
 from plpd.ingest.fpl_core import SourceFile
 
 
@@ -22,6 +22,11 @@ def content_hash(files: list[SourceFile]) -> str:
         digest.update(file.name.encode())
         digest.update(file.raw)
     return digest.hexdigest()
+
+
+def file_hash(data: bytes) -> str:
+    # Hashes the stored bytes, so a backfill can match it from Parquet alone.
+    return hashlib.sha256(data).hexdigest()
 
 
 def archive(
@@ -56,10 +61,6 @@ def archive(
     destination = root / source / season / fetched_at.strftime("%Y%m%dT%H%M%SZ")
     destination.mkdir(parents=True, exist_ok=True)
 
-    for file in files:
-        stem = file.name.replace("/", "__").removesuffix(".csv")
-        file.frame.to_parquet(destination / f"{stem}.parquet", index=False)
-
     snapshot = Snapshot(
         source=source,
         season=season,
@@ -70,5 +71,25 @@ def archive(
         row_count=sum(len(f.frame) for f in files),
     )
     session.add(snapshot)
+    session.flush()
+
+    for file in files:
+        stem = file.name.replace("/", "__").removesuffix(".csv")
+        data = file.frame.to_parquet(index=False)
+        # to_parquet returns bytes when given no path. The stubs allow None too.
+        if data is None:
+            raise RuntimeError(f"pandas returned no bytes for {file.name}")
+        path = destination / f"{stem}.parquet"
+        path.write_bytes(data)
+        session.add(
+            SnapshotFile(
+                snapshot_id=snapshot.id,
+                name=stem,
+                content_hash=file_hash(data),
+                storage_uri=path.as_posix(),
+                row_count=len(file.frame),
+            )
+        )
+
     session.flush()
     return snapshot

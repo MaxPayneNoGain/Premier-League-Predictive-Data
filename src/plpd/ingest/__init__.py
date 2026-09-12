@@ -8,7 +8,7 @@ from plpd.ingest.load import (
     load_teams,
 )
 from plpd.ingest.odds import ClubFootballOddsSource
-from plpd.ingest.snapshots import archive, content_hash
+from plpd.ingest.snapshots import archive, content_hash, file_hash
 
 __all__ = [
     "ClubFootballOddsSource",
@@ -18,6 +18,7 @@ __all__ = [
     "SourceFile",
     "archive",
     "content_hash",
+    "file_hash",
     "has_frame",
     "load_fixtures",
     "load_matches",

@@ -8,7 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from plpd.db.tables import Snapshot, SnapshotFile
-from plpd.ingest import SourceFile, archive, content_hash
+from plpd.ingest import SourceFile, archive, content_hash, file_hash
 from plpd.ingest.fpl_core import read_csv
 
 FETCHED_AT = datetime(2026, 8, 31, 8, 0, tzinfo=UTC)
@@ -82,6 +82,34 @@ def test_empty_pull_is_rejected(session: Session, tmp_path: Path) -> None:
         archive(
             session, [], source="fpl_core", season="2026-2027", source_ref="main", root=tmp_path
         )
+
+
+def test_file_hash_tracks_content() -> None:
+    same = file_hash(b"identical bytes")
+    assert same == file_hash(b"identical bytes")
+    assert same != file_hash(b"different bytes")
+
+
+def test_archive_records_a_row_per_file(
+    session: Session, files: list[SourceFile], tmp_path: Path
+) -> None:
+    snapshot = archive(
+        session,
+        files,
+        source="fpl_core",
+        season="2026-2027",
+        source_ref="main",
+        root=tmp_path,
+        fetched_at=FETCHED_AT,
+    )
+
+    assert snapshot is not None
+    indexed = session.scalars(
+        select(SnapshotFile).where(SnapshotFile.snapshot_id == snapshot.id)
+    ).all()
+    assert sorted(f.name for f in indexed) == ["GW3__fixtures", "players"]
+    assert all(len(f.content_hash) == 64 for f in indexed)
+    assert all(Path(f.storage_uri).exists() for f in indexed)
 
 
 def make_snapshot(session: Session) -> Snapshot:

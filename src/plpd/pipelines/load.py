@@ -15,7 +15,7 @@ from plpd.db import build_engine, build_session_factory
 from plpd.ingest import ClubFootballOddsSource, FplCoreLegacySource, FplCoreSource
 from plpd.ingest.load import (
     archived_snapshots,
-    fixture_paths,
+    fixture_names,
     has_frame,
     latest_snapshot,
     load_fixtures,
@@ -80,7 +80,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 if args.legacy:
                     # The earliest legacy snapshots archived matches only.
                     legacy_teams = (
-                        load_teams(session, snapshot) if has_frame(snapshot, "teams") else 0
+                        load_teams(session, snapshot)
+                        if has_frame(session, snapshot, "teams")
+                        else 0
                     )
                     log.info(
                         "snapshot %d: %d teams, %d matches",
@@ -92,7 +94,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
                 teams = load_teams(session, snapshot)
                 players = load_players(session, snapshot)
-                fixtures = load_fixtures(session, snapshot) if fixture_paths(snapshot) else 0
+                has_fixtures = bool(fixture_names(session, snapshot))
+                fixtures = load_fixtures(session, snapshot) if has_fixtures else 0
                 log.info(
                     "snapshot %d: %d teams, %d players, %d fixtures",
                     snapshot.id,

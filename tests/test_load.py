@@ -3,10 +3,10 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from plpd.db.tables import Fixture, Odds, Player, Snapshot, Team
+from plpd.db.tables import Fixture, Odds, Player, Snapshot, SnapshotFile, Team
 from plpd.ingest.load import (
     _club_code,
     archived_snapshots,
@@ -16,11 +16,13 @@ from plpd.ingest.load import (
     load_odds,
     load_players,
     load_teams,
+    read_frame,
     to_bool,
     to_datetime,
     to_int,
     tournament_of,
 )
+from plpd.ingest.snapshots import file_hash
 
 FETCHED_AT = datetime(2026, 8, 31, 8, 0, tzinfo=UTC)
 
@@ -111,8 +113,6 @@ def make_snapshot(
 ) -> Snapshot:
     destination = root / tag
     destination.mkdir(parents=True)
-    for name, frame in frames.items():
-        frame.to_parquet(destination / f"{name}.parquet", index=False)
 
     snapshot = Snapshot(
         source=source,
@@ -124,6 +124,20 @@ def make_snapshot(
         row_count=sum(len(frame) for frame in frames.values()),
     )
     session.add(snapshot)
+    session.flush()
+
+    for name, frame in frames.items():
+        path = destination / f"{name}.parquet"
+        frame.to_parquet(path, index=False)
+        session.add(
+            SnapshotFile(
+                snapshot_id=snapshot.id,
+                name=name,
+                content_hash=file_hash(path.read_bytes()),
+                storage_uri=path.as_posix(),
+                row_count=len(frame),
+            )
+        )
     session.flush()
     return snapshot
 
@@ -164,10 +178,10 @@ def test_a_later_snapshot_overwrites_rather_than_duplicates(
     assert arsenal.short_name == "ARE"
 
 
-def test_a_missing_file_names_the_snapshot_and_the_path(session: Session, tmp_path: Path) -> None:
+def test_a_missing_file_names_the_snapshot_and_the_file(session: Session, tmp_path: Path) -> None:
     snapshot = make_snapshot(session, tmp_path, {"teams": TEAMS})
 
-    with pytest.raises(FileNotFoundError, match=r"players\.parquet"):
+    with pytest.raises(FileNotFoundError, match="snapshot 1 has no players"):
         load_players(session, snapshot)
 
 
@@ -305,8 +319,16 @@ def test_a_snapshot_reports_which_frames_it_holds(session: Session, tmp_path: Pa
         session, tmp_path, {"matches": MATCHES}, source="fpl_core_legacy", season="2024-2025"
     )
 
-    assert has_frame(snapshot, "matches")
-    assert not has_frame(snapshot, "teams")
+    assert has_frame(session, snapshot, "matches")
+    assert not has_frame(session, snapshot, "teams")
+
+
+def test_read_frame_uses_the_index(session: Session, tmp_path: Path) -> None:
+    snapshot = make_snapshot(session, tmp_path, {"teams": TEAMS})
+    session.execute(delete(SnapshotFile).where(SnapshotFile.name == "teams"))
+
+    with pytest.raises(FileNotFoundError, match="has no teams"):
+        read_frame(session, snapshot, "teams")
 
 
 ODDS_TEAMS = pd.DataFrame(
