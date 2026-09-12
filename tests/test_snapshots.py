@@ -49,9 +49,14 @@ def test_archive_writes_parquet_and_flattens_nested_names(
     )
 
     assert snapshot is not None
-    written = sorted(p.name for p in Path(snapshot.storage_uri).glob("*.parquet"))
-    assert written == ["GW3__fixtures.parquet", "players.parquet"]
-    assert len(pd.read_parquet(Path(snapshot.storage_uri) / "players.parquet")) == 1
+    indexed = {
+        row.name: row.storage_uri
+        for row in session.scalars(
+            select(SnapshotFile).where(SnapshotFile.snapshot_id == snapshot.id)
+        )
+    }
+    assert sorted(indexed) == ["GW3__fixtures", "players"]
+    assert len(pd.read_parquet(indexed["players"])) == 1
     assert snapshot.row_count == 2
 
 
@@ -82,6 +87,37 @@ def test_empty_pull_is_rejected(session: Session, tmp_path: Path) -> None:
         archive(
             session, [], source="fpl_core", season="2026-2027", source_ref="main", root=tmp_path
         )
+
+
+def test_unchanged_file_is_stored_once(
+    session: Session, files: list[SourceFile], tmp_path: Path
+) -> None:
+    archive(
+        session,
+        files,
+        source="fpl_core",
+        season="2026-2027",
+        source_ref="main",
+        root=tmp_path,
+        fetched_at=FETCHED_AT,
+    )
+    changed = [files[0], make_file("GW4/fixtures.csv", b"gameweek,match_id\n4,def\n")]
+    second = archive(
+        session,
+        changed,
+        source="fpl_core",
+        season="2026-2027",
+        source_ref="main",
+        root=tmp_path,
+        fetched_at=datetime(2026, 8, 31, 18, 0, tzinfo=UTC),
+    )
+
+    assert second is not None
+    assert len(list(tmp_path.rglob("*.parquet"))) == 3
+
+    players = session.scalars(select(SnapshotFile).where(SnapshotFile.name == "players")).all()
+    assert len(players) == 2
+    assert players[0].storage_uri == players[1].storage_uri
 
 
 def test_file_hash_tracks_content() -> None:
@@ -118,7 +154,6 @@ def make_snapshot(session: Session) -> Snapshot:
         season="2026-2027",
         fetched_at=FETCHED_AT,
         source_ref="main",
-        storage_uri="unused",
         content_hash="a" * 64,
         row_count=1,
     )

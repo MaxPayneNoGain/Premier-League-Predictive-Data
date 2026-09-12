@@ -69,7 +69,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             if snapshot is None:
                 log.info("%s unchanged since last pull", season)
             else:
-                log.info("archived %d files to %s", len(files), snapshot.storage_uri)
+                log.info("archived %d files for %s", len(files), season)
 
     return 0
 

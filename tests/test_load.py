@@ -119,7 +119,6 @@ def make_snapshot(
         season=season,
         fetched_at=fetched_at,
         source_ref="main",
-        storage_uri=destination.as_posix(),
         content_hash=tag * 64,
         row_count=sum(len(frame) for frame in frames.values()),
     )

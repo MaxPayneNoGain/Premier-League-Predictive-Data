@@ -42,7 +42,6 @@ class Snapshot(Base):
     fetched_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
 
     source_ref: Mapped[str] = mapped_column(String(64))
-    storage_uri: Mapped[str] = mapped_column(Text)
     content_hash: Mapped[str] = mapped_column(String(64))
     row_count: Mapped[int] = mapped_column(Integer)
 

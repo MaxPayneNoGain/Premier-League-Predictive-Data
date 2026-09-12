@@ -56,17 +56,11 @@ def archive(
     if seen is not None:
         return None
 
-    fetched_at = fetched_at or datetime.now(UTC)
-    # one directory per pull, named by the time we fetched it
-    destination = root / source / season / fetched_at.strftime("%Y%m%dT%H%M%SZ")
-    destination.mkdir(parents=True, exist_ok=True)
-
     snapshot = Snapshot(
         source=source,
         season=season,
-        fetched_at=fetched_at,
+        fetched_at=fetched_at or datetime.now(UTC),
         source_ref=source_ref,
-        storage_uri=destination.as_posix(),
         content_hash=digest,
         row_count=sum(len(f.frame) for f in files),
     )
@@ -79,13 +73,18 @@ def archive(
         # to_parquet returns bytes when given no path. The stubs allow None too.
         if data is None:
             raise RuntimeError(f"pandas returned no bytes for {file.name}")
-        path = destination / f"{stem}.parquet"
-        path.write_bytes(data)
+        # Named by content, so a file upstream has not changed resolves to a path
+        # that already holds it.
+        stored = file_hash(data)
+        path = root / source / stem / f"{stored}.parquet"
+        if not path.is_file():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
         session.add(
             SnapshotFile(
                 snapshot_id=snapshot.id,
                 name=stem,
-                content_hash=file_hash(data),
+                content_hash=stored,
                 storage_uri=path.as_posix(),
                 row_count=len(file.frame),
             )
