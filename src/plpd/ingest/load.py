@@ -256,7 +256,9 @@ def _match_ids(session: Session, season: str) -> dict[tuple[date, int, int], str
 
 
 def _club_code(name: str, codes: dict[str, int]) -> int:
-    club = ODDS_ALIASES.get(name, name)
+    # 2024-2025 names Ipswich, Coventry and Hull the way the odds source does, so
+    # the alias has to be a fallback rather than the first thing tried.
+    club = name if name in codes else ODDS_ALIASES.get(name, name)
     if club not in codes:
         raise ValueError(f"no team code for {name!r} - the odds source may have renamed a club")
     return codes[club]

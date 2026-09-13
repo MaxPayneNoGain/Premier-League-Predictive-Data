@@ -440,6 +440,10 @@ def test_a_priced_match_we_never_loaded_is_skipped(
     )
 
 
+def test_a_season_spelling_a_club_the_odds_way_skips_the_alias() -> None:
+    assert _club_code("Ipswich", {"Ipswich": 40}) == 40
+
+
 def test_the_promoted_clubs_keep_the_suffix_the_odds_source_drops() -> None:
     codes = {"Coventry City": 3, "Hull City": 8, "Ipswich Town": 40}
 
