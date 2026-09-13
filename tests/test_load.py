@@ -1,5 +1,4 @@
 from datetime import UTC, datetime
-from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -23,6 +22,7 @@ from plpd.ingest.load import (
     tournament_of,
 )
 from plpd.ingest.snapshots import file_hash
+from plpd.ingest.storage import FilesystemStore
 
 FETCHED_AT = datetime(2026, 8, 31, 8, 0, tzinfo=UTC)
 
@@ -103,7 +103,7 @@ MATCHES = pd.DataFrame(
 
 def make_snapshot(
     session: Session,
-    root: Path,
+    store: FilesystemStore,
     frames: dict[str, pd.DataFrame],
     *,
     tag: str = "a",
@@ -111,9 +111,6 @@ def make_snapshot(
     source: str = "fpl_core",
     season: str = "2026-2027",
 ) -> Snapshot:
-    destination = root / tag
-    destination.mkdir(parents=True)
-
     snapshot = Snapshot(
         source=source,
         season=season,
@@ -126,14 +123,14 @@ def make_snapshot(
     session.flush()
 
     for name, frame in frames.items():
-        path = destination / f"{name}.parquet"
-        frame.to_parquet(path, index=False)
+        data = frame.to_parquet(index=False)
+        assert data is not None
         session.add(
             SnapshotFile(
                 snapshot_id=snapshot.id,
                 name=name,
-                content_hash=file_hash(path.read_bytes()),
-                storage_uri=path.as_posix(),
+                content_hash=file_hash(data),
+                storage_uri=store.put(f"{tag}/{name}.parquet", data),
                 row_count=len(frame),
             )
         )
@@ -141,20 +138,20 @@ def make_snapshot(
     return snapshot
 
 
-def test_teams_load_with_the_snapshot_season(session: Session, tmp_path: Path) -> None:
-    snapshot = make_snapshot(session, tmp_path, {"teams": TEAMS})
+def test_teams_load_with_the_snapshot_season(session: Session, store: FilesystemStore) -> None:
+    snapshot = make_snapshot(session, store, {"teams": TEAMS})
 
-    assert load_teams(session, snapshot) == 2
+    assert load_teams(session, snapshot, store=store) == 2
 
     arsenal = session.get(Team, ("2026-2027", 1))
     assert arsenal is not None
     assert (arsenal.name, arsenal.code) == ("Arsenal", 3)
 
 
-def test_players_keep_id_and_code_apart(session: Session, tmp_path: Path) -> None:
-    snapshot = make_snapshot(session, tmp_path, {"players": PLAYERS})
+def test_players_keep_id_and_code_apart(session: Session, store: FilesystemStore) -> None:
+    snapshot = make_snapshot(session, store, {"players": PLAYERS})
 
-    load_players(session, snapshot)
+    load_players(session, snapshot, store=store)
 
     player = session.get(Player, ("2026-2027", 452))
     assert player is not None
@@ -163,13 +160,13 @@ def test_players_keep_id_and_code_apart(session: Session, tmp_path: Path) -> Non
 
 
 def test_a_later_snapshot_overwrites_rather_than_duplicates(
-    session: Session, tmp_path: Path
+    session: Session, store: FilesystemStore
 ) -> None:
-    load_teams(session, make_snapshot(session, tmp_path, {"teams": TEAMS}))
+    load_teams(session, make_snapshot(session, store, {"teams": TEAMS}), store=store)
 
     renamed = TEAMS.copy()
     renamed.loc[0, "short_name"] = "ARE"
-    load_teams(session, make_snapshot(session, tmp_path, {"teams": renamed}, tag="b"))
+    load_teams(session, make_snapshot(session, store, {"teams": renamed}, tag="b"), store=store)
 
     assert len(session.scalars(select(Team)).all()) == 2
     arsenal = session.get(Team, ("2026-2027", 1))
@@ -177,17 +174,21 @@ def test_a_later_snapshot_overwrites_rather_than_duplicates(
     assert arsenal.short_name == "ARE"
 
 
-def test_a_missing_file_names_the_snapshot_and_the_file(session: Session, tmp_path: Path) -> None:
-    snapshot = make_snapshot(session, tmp_path, {"teams": TEAMS})
+def test_a_missing_file_names_the_snapshot_and_the_file(
+    session: Session, store: FilesystemStore
+) -> None:
+    snapshot = make_snapshot(session, store, {"teams": TEAMS})
 
     with pytest.raises(FileNotFoundError, match="snapshot 1 has no players"):
-        load_players(session, snapshot)
+        load_players(session, snapshot, store=store)
 
 
-def test_float_formatted_team_codes_become_integers(session: Session, tmp_path: Path) -> None:
-    snapshot = make_snapshot(session, tmp_path, {"GW3__fixtures": FIXTURES})
+def test_float_formatted_team_codes_become_integers(
+    session: Session, store: FilesystemStore
+) -> None:
+    snapshot = make_snapshot(session, store, {"GW3__fixtures": FIXTURES})
 
-    assert load_fixtures(session, snapshot) == 2
+    assert load_fixtures(session, snapshot, store=store) == 2
 
     arsenal = session.get(Fixture, "26-27-prem-arsenal-vs-chelsea")
     assert arsenal is not None
@@ -195,8 +196,10 @@ def test_float_formatted_team_codes_become_integers(session: Session, tmp_path: 
     assert arsenal.season == "2026-2027"
 
 
-def test_an_unplayed_fixture_is_not_marked_finished(session: Session, tmp_path: Path) -> None:
-    load_fixtures(session, make_snapshot(session, tmp_path, {"GW3__fixtures": FIXTURES}))
+def test_an_unplayed_fixture_is_not_marked_finished(
+    session: Session, store: FilesystemStore
+) -> None:
+    load_fixtures(session, make_snapshot(session, store, {"GW3__fixtures": FIXTURES}), store=store)
 
     played = session.get(Fixture, "26-27-prem-ipswich-town-vs-liverpool")
     unplayed = session.get(Fixture, "26-27-prem-arsenal-vs-chelsea")
@@ -205,8 +208,10 @@ def test_an_unplayed_fixture_is_not_marked_finished(session: Session, tmp_path: 
     assert unplayed.finished is False
 
 
-def test_blank_scores_and_elo_load_as_null_not_zero(session: Session, tmp_path: Path) -> None:
-    load_fixtures(session, make_snapshot(session, tmp_path, {"GW3__fixtures": FIXTURES}))
+def test_blank_scores_and_elo_load_as_null_not_zero(
+    session: Session, store: FilesystemStore
+) -> None:
+    load_fixtures(session, make_snapshot(session, store, {"GW3__fixtures": FIXTURES}), store=store)
 
     unplayed = session.get(Fixture, "26-27-prem-arsenal-vs-chelsea")
     assert unplayed is not None
@@ -227,23 +232,23 @@ def test_a_fractional_code_is_rejected_rather_than_truncated() -> None:
 
 
 def test_a_snapshot_without_fixtures_is_named_in_the_error(
-    session: Session, tmp_path: Path
+    session: Session, store: FilesystemStore
 ) -> None:
-    snapshot = make_snapshot(session, tmp_path, {"teams": TEAMS})
+    snapshot = make_snapshot(session, store, {"teams": TEAMS})
 
     with pytest.raises(FileNotFoundError, match="no gameweek fixtures"):
-        load_fixtures(session, snapshot)
+        load_fixtures(session, snapshot, store=store)
 
 
 def test_a_replay_runs_oldest_first_so_the_newest_pull_wins(
-    session: Session, tmp_path: Path
+    session: Session, store: FilesystemStore
 ) -> None:
-    older = make_snapshot(session, tmp_path, {"teams": TEAMS})
+    older = make_snapshot(session, store, {"teams": TEAMS})
     renamed = TEAMS.copy()
     renamed.loc[0, "short_name"] = "ARE"
     newer = make_snapshot(
         session,
-        tmp_path,
+        store,
         {"teams": renamed},
         tag="b",
         fetched_at=datetime(2026, 8, 31, 18, 0, tzinfo=UTC),
@@ -253,7 +258,7 @@ def test_a_replay_runs_oldest_first_so_the_newest_pull_wins(
     assert [snapshot.id for snapshot in replay] == [older.id, newer.id]
 
     for snapshot in replay:
-        load_teams(session, snapshot)
+        load_teams(session, snapshot, store=store)
 
     arsenal = session.get(Team, ("2026-2027", 1))
     assert arsenal is not None
@@ -261,13 +266,13 @@ def test_a_replay_runs_oldest_first_so_the_newest_pull_wins(
 
 
 def test_a_whole_season_file_loads_with_its_competition_recovered(
-    session: Session, tmp_path: Path
+    session: Session, store: FilesystemStore
 ) -> None:
     snapshot = make_snapshot(
-        session, tmp_path, {"matches": MATCHES}, source="fpl_core_legacy", season="2024-2025"
+        session, store, {"matches": MATCHES}, source="fpl_core_legacy", season="2024-2025"
     )
 
-    assert load_matches(session, snapshot) == 1
+    assert load_matches(session, snapshot, store=store) == 1
 
     played = session.get(Fixture, "24-25-prem-afc-bournemouth-vs-arsenal")
     assert played is not None
@@ -313,21 +318,21 @@ def test_an_unknown_competition_is_rejected() -> None:
         tournament_of("24-25-friendly-arsenal-vs-chelsea", "2024-2025")
 
 
-def test_a_snapshot_reports_which_frames_it_holds(session: Session, tmp_path: Path) -> None:
+def test_a_snapshot_reports_which_frames_it_holds(session: Session, store: FilesystemStore) -> None:
     snapshot = make_snapshot(
-        session, tmp_path, {"matches": MATCHES}, source="fpl_core_legacy", season="2024-2025"
+        session, store, {"matches": MATCHES}, source="fpl_core_legacy", season="2024-2025"
     )
 
     assert has_frame(session, snapshot, "matches")
     assert not has_frame(session, snapshot, "teams")
 
 
-def test_read_frame_uses_the_index(session: Session, tmp_path: Path) -> None:
-    snapshot = make_snapshot(session, tmp_path, {"teams": TEAMS})
+def test_read_frame_uses_the_index(session: Session, store: FilesystemStore) -> None:
+    snapshot = make_snapshot(session, store, {"teams": TEAMS})
     session.execute(delete(SnapshotFile).where(SnapshotFile.name == "teams"))
 
     with pytest.raises(FileNotFoundError, match="has no teams"):
-        read_frame(session, snapshot, "teams")
+        read_frame(session, snapshot, "teams", store=store)
 
 
 ODDS_TEAMS = pd.DataFrame(
@@ -370,17 +375,24 @@ ODDS_ROWS = pd.DataFrame(
 )
 
 
-def load_a_season(session: Session, root: Path) -> None:
-    load_teams(session, make_snapshot(session, root, {"teams": ODDS_TEAMS}, tag="t"))
-    load_fixtures(session, make_snapshot(session, root, {"GW4__fixtures": ODDS_FIXTURES}, tag="f"))
+def load_a_season(session: Session, store: FilesystemStore) -> None:
+    load_teams(session, make_snapshot(session, store, {"teams": ODDS_TEAMS}, tag="t"), store=store)
+    load_fixtures(
+        session,
+        make_snapshot(session, store, {"GW4__fixtures": ODDS_FIXTURES}, tag="f"),
+        store=store,
+    )
 
 
 def test_odds_reach_their_fixture_through_the_club_aliases(
-    session: Session, tmp_path: Path
+    session: Session, store: FilesystemStore
 ) -> None:
-    load_a_season(session, tmp_path)
+    load_a_season(session, store)
 
-    assert load_odds(session, make_snapshot(session, tmp_path, {"odds": ODDS_ROWS}, tag="o")) == 1
+    assert (
+        load_odds(session, make_snapshot(session, store, {"odds": ODDS_ROWS}, tag="o"), store=store)
+        == 1
+    )
 
     priced = session.get(Odds, "26-27-prem-arsenal-vs-tottenham-hotspur")
     assert priced is not None
@@ -388,34 +400,44 @@ def test_odds_reach_their_fixture_through_the_club_aliases(
     assert priced.bookmaker == "bet365"
 
 
-def test_a_club_the_odds_source_renamed_stops_the_load(session: Session, tmp_path: Path) -> None:
-    load_a_season(session, tmp_path)
+def test_a_club_the_odds_source_renamed_stops_the_load(
+    session: Session, store: FilesystemStore
+) -> None:
+    load_a_season(session, store)
     strange = ODDS_ROWS.copy()
     strange.loc[0, "AwayTeam"] = "Real Madrid"
 
     with pytest.raises(ValueError, match="no team code"):
-        load_odds(session, make_snapshot(session, tmp_path, {"odds": strange}, tag="o"))
+        load_odds(session, make_snapshot(session, store, {"odds": strange}, tag="o"), store=store)
 
 
-def test_odds_need_the_season_teams_loaded_first(session: Session, tmp_path: Path) -> None:
+def test_odds_need_the_season_teams_loaded_first(session: Session, store: FilesystemStore) -> None:
     with pytest.raises(ValueError, match="no teams loaded"):
-        load_odds(session, make_snapshot(session, tmp_path, {"odds": ODDS_ROWS}, tag="o"))
+        load_odds(session, make_snapshot(session, store, {"odds": ODDS_ROWS}, tag="o"), store=store)
 
 
-def test_a_match_with_no_price_is_left_alone(session: Session, tmp_path: Path) -> None:
-    load_a_season(session, tmp_path)
+def test_a_match_with_no_price_is_left_alone(session: Session, store: FilesystemStore) -> None:
+    load_a_season(session, store)
     blank = ODDS_ROWS.copy()
     blank.loc[0, "OddDraw"] = ""
 
-    assert load_odds(session, make_snapshot(session, tmp_path, {"odds": blank}, tag="o")) == 0
+    assert (
+        load_odds(session, make_snapshot(session, store, {"odds": blank}, tag="o"), store=store)
+        == 0
+    )
 
 
-def test_a_priced_match_we_never_loaded_is_skipped(session: Session, tmp_path: Path) -> None:
-    load_a_season(session, tmp_path)
+def test_a_priced_match_we_never_loaded_is_skipped(
+    session: Session, store: FilesystemStore
+) -> None:
+    load_a_season(session, store)
     elsewhere = ODDS_ROWS.copy()
     elsewhere.loc[0, "MatchDate"] = "2026-09-19"
 
-    assert load_odds(session, make_snapshot(session, tmp_path, {"odds": elsewhere}, tag="o")) == 0
+    assert (
+        load_odds(session, make_snapshot(session, store, {"odds": elsewhere}, tag="o"), store=store)
+        == 0
+    )
 
 
 def test_the_promoted_clubs_keep_the_suffix_the_odds_source_drops() -> None:

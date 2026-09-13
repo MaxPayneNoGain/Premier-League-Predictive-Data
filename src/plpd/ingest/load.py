@@ -7,6 +7,7 @@ here treats a blank as absent rather than as a zero-valued default.
 
 from collections.abc import Hashable, Mapping
 from datetime import UTC, date, datetime
+from io import BytesIO
 from typing import Any
 
 import pandas as pd
@@ -16,6 +17,7 @@ from sqlalchemy.orm import Session
 from plpd.db.tables import Fixture, Odds, Player, Snapshot, SnapshotFile, Team
 from plpd.db.upsert import upsert
 from plpd.ingest.odds import BOOKMAKER
+from plpd.ingest.storage import ObjectStore
 
 # 2024-2025 writes these uppercase, later seasons write them capitalised.
 BOOLEANS = {"True": True, "TRUE": True, "False": False, "FALSE": False}
@@ -119,11 +121,13 @@ def has_frame(session: Session, snapshot: Snapshot, name: str) -> bool:
     return name in indexed_files(session, snapshot)
 
 
-def read_frame(session: Session, snapshot: Snapshot, name: str) -> pd.DataFrame:
+def read_frame(
+    session: Session, snapshot: Snapshot, name: str, *, store: ObjectStore
+) -> pd.DataFrame:
     uri = indexed_files(session, snapshot).get(name)
     if uri is None:
         raise FileNotFoundError(f"snapshot {snapshot.id} has no {name}")
-    return pd.read_parquet(uri)
+    return pd.read_parquet(BytesIO(store.get(uri)))
 
 
 def fixture_names(session: Session, snapshot: Snapshot) -> list[str]:
@@ -133,12 +137,17 @@ def fixture_names(session: Session, snapshot: Snapshot) -> list[str]:
     return sorted(n for n in indexed if n.startswith("GW") and n.endswith("__fixtures"))
 
 
-def fixture_frames(session: Session, snapshot: Snapshot) -> list[pd.DataFrame]:
+def fixture_frames(
+    session: Session, snapshot: Snapshot, *, store: ObjectStore
+) -> list[pd.DataFrame]:
     indexed = indexed_files(session, snapshot)
-    return [pd.read_parquet(indexed[name]) for name in fixture_names(session, snapshot)]
+    return [
+        pd.read_parquet(BytesIO(store.get(indexed[name])))
+        for name in fixture_names(session, snapshot)
+    ]
 
 
-def load_teams(session: Session, snapshot: Snapshot) -> int:
+def load_teams(session: Session, snapshot: Snapshot, *, store: ObjectStore) -> int:
     rows: list[dict[str, Any]] = [
         {
             "season": snapshot.season,
@@ -147,13 +156,13 @@ def load_teams(session: Session, snapshot: Snapshot) -> int:
             "name": row["name"],
             "short_name": row["short_name"],
         }
-        for row in read_frame(session, snapshot, "teams").to_dict(orient="records")
+        for row in read_frame(session, snapshot, "teams", store=store).to_dict(orient="records")
     ]
     upsert(session, Team, rows)
     return len(rows)
 
 
-def load_players(session: Session, snapshot: Snapshot) -> int:
+def load_players(session: Session, snapshot: Snapshot, *, store: ObjectStore) -> int:
     rows: list[dict[str, Any]] = [
         {
             "season": snapshot.season,
@@ -165,7 +174,7 @@ def load_players(session: Session, snapshot: Snapshot) -> int:
             "team_code": to_int(row["team_code"]),
             "position": row["position"],
         }
-        for row in read_frame(session, snapshot, "players").to_dict(orient="records")
+        for row in read_frame(session, snapshot, "players", store=store).to_dict(orient="records")
     ]
     upsert(session, Player, rows)
     return len(rows)
@@ -188,13 +197,13 @@ def _fixture_row(row: Mapping[Hashable, Any], *, season: str, tournament: str) -
     }
 
 
-def load_fixtures(session: Session, snapshot: Snapshot) -> int:
+def load_fixtures(session: Session, snapshot: Snapshot, *, store: ObjectStore) -> int:
     """Load every gameweek's fixtures the archive happens to hold.
 
     The team columns carry codes rather than FPL ids, and the file has no season
     column, so that comes from the snapshot.
     """
-    frames = fixture_frames(session, snapshot)
+    frames = fixture_frames(session, snapshot, store=store)
     if not frames:
         raise FileNotFoundError(f"snapshot {snapshot.id} archived no gameweek fixtures")
 
@@ -207,7 +216,7 @@ def load_fixtures(session: Session, snapshot: Snapshot) -> int:
     return len(rows)
 
 
-def load_matches(session: Session, snapshot: Snapshot) -> int:
+def load_matches(session: Session, snapshot: Snapshot, *, store: ObjectStore) -> int:
     """Load a whole season from the single matches file the older layout ships.
 
     That file carries no `tournament` column, so the competition is read back
@@ -219,7 +228,7 @@ def load_matches(session: Session, snapshot: Snapshot) -> int:
             season=snapshot.season,
             tournament=tournament_of(row["match_id"], snapshot.season),
         )
-        for row in read_frame(session, snapshot, "matches").to_dict(orient="records")
+        for row in read_frame(session, snapshot, "matches", store=store).to_dict(orient="records")
     ]
     upsert(session, Fixture, rows)
     return len(rows)
@@ -253,7 +262,7 @@ def _club_code(name: str, codes: dict[str, int]) -> int:
     return codes[club]
 
 
-def load_odds(session: Session, snapshot: Snapshot) -> int:
+def load_odds(session: Session, snapshot: Snapshot, *, store: ObjectStore) -> int:
     """Attach bookmaker prices to fixtures already loaded for the season.
 
     The odds source names clubs where ours carries codes, so the two are matched
@@ -266,7 +275,7 @@ def load_odds(session: Session, snapshot: Snapshot) -> int:
     fixtures = _match_ids(session, snapshot.season)
 
     rows: list[dict[str, Any]] = []
-    for row in read_frame(session, snapshot, "odds").to_dict(orient="records"):
+    for row in read_frame(session, snapshot, "odds", store=store).to_dict(orient="records"):
         if not (row["OddHome"] and row["OddDraw"] and row["OddAway"]):
             continue
         home = _club_code(str(row["HomeTeam"]), codes)

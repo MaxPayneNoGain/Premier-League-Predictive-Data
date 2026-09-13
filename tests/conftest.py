@@ -7,11 +7,17 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from plpd.config import Settings
 from plpd.db.tables import Base
+from plpd.ingest.storage import FilesystemStore
 
 
 @pytest.fixture
 def settings(tmp_path: Path) -> Settings:
     return Settings(_env_file=None, snapshot_root=tmp_path)
+
+
+@pytest.fixture
+def store(tmp_path: Path) -> FilesystemStore:
+    return FilesystemStore(tmp_path)
 
 
 @pytest.fixture

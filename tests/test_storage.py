@@ -34,3 +34,13 @@ def test_get_rejects_a_missing_uri(tmp_path: Path) -> None:
 
     with pytest.raises(FileNotFoundError):
         store.get((tmp_path / "gone.parquet").as_posix())
+
+
+def test_put_does_not_overwrite_an_existing_key(tmp_path: Path) -> None:
+    store = FilesystemStore(tmp_path)
+
+    first = store.put("a/b.parquet", b"original")
+    second = store.put("a/b.parquet", b"replacement")
+
+    assert first == second
+    assert store.get(first) == b"original"

@@ -9,11 +9,14 @@ from plpd.ingest.load import (
 )
 from plpd.ingest.odds import ClubFootballOddsSource
 from plpd.ingest.snapshots import archive, content_hash, file_hash
+from plpd.ingest.storage import FilesystemStore, ObjectStore
 
 __all__ = [
     "ClubFootballOddsSource",
+    "FilesystemStore",
     "FplCoreLegacySource",
     "FplCoreSource",
+    "ObjectStore",
     "SourceError",
     "SourceFile",
     "archive",

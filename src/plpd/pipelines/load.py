@@ -12,7 +12,12 @@ from collections.abc import Sequence
 
 from plpd.config import Settings
 from plpd.db import build_engine, build_session_factory
-from plpd.ingest import ClubFootballOddsSource, FplCoreLegacySource, FplCoreSource
+from plpd.ingest import (
+    ClubFootballOddsSource,
+    FilesystemStore,
+    FplCoreLegacySource,
+    FplCoreSource,
+)
 from plpd.ingest.load import (
     archived_snapshots,
     fixture_names,
@@ -53,6 +58,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     settings = Settings()
     session_factory = build_session_factory(build_engine(settings))
+    store = FilesystemStore(settings.snapshot_root)
     if args.odds:
         source = ClubFootballOddsSource.name
     elif args.legacy:
@@ -74,13 +80,17 @@ def main(argv: Sequence[str] | None = None) -> int:
 
             for snapshot in snapshots:
                 if args.odds:
-                    log.info("snapshot %d: %d odds", snapshot.id, load_odds(session, snapshot))
+                    log.info(
+                        "snapshot %d: %d odds",
+                        snapshot.id,
+                        load_odds(session, snapshot, store=store),
+                    )
                     continue
 
                 if args.legacy:
                     # The earliest legacy snapshots archived matches only.
                     legacy_teams = (
-                        load_teams(session, snapshot)
+                        load_teams(session, snapshot, store=store)
                         if has_frame(session, snapshot, "teams")
                         else 0
                     )
@@ -88,14 +98,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                         "snapshot %d: %d teams, %d matches",
                         snapshot.id,
                         legacy_teams,
-                        load_matches(session, snapshot),
+                        load_matches(session, snapshot, store=store),
                     )
                     continue
 
-                teams = load_teams(session, snapshot)
-                players = load_players(session, snapshot)
+                teams = load_teams(session, snapshot, store=store)
+                players = load_players(session, snapshot, store=store)
                 has_fixtures = bool(fixture_names(session, snapshot))
-                fixtures = load_fixtures(session, snapshot) if has_fixtures else 0
+                fixtures = load_fixtures(session, snapshot, store=store) if has_fixtures else 0
                 log.info(
                     "snapshot %d: %d teams, %d players, %d fixtures",
                     snapshot.id,

@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from io import BytesIO
 from pathlib import Path
 
 import pandas as pd
@@ -10,6 +11,7 @@ from sqlalchemy.orm import Session
 from plpd.db.tables import Snapshot, SnapshotFile
 from plpd.ingest import SourceFile, archive, content_hash, file_hash
 from plpd.ingest.fpl_core import read_csv
+from plpd.ingest.storage import FilesystemStore
 
 FETCHED_AT = datetime(2026, 8, 31, 8, 0, tzinfo=UTC)
 
@@ -36,7 +38,7 @@ def test_content_hash_changes_with_content(files: list[SourceFile]) -> None:
 
 
 def test_archive_writes_parquet_and_flattens_nested_names(
-    session: Session, files: list[SourceFile], tmp_path: Path
+    session: Session, files: list[SourceFile], store: FilesystemStore
 ) -> None:
     snapshot = archive(
         session,
@@ -44,7 +46,7 @@ def test_archive_writes_parquet_and_flattens_nested_names(
         source="fpl_core",
         season="2026-2027",
         source_ref="main",
-        root=tmp_path,
+        store=store,
         fetched_at=FETCHED_AT,
     )
 
@@ -56,12 +58,12 @@ def test_archive_writes_parquet_and_flattens_nested_names(
         )
     }
     assert sorted(indexed) == ["GW3__fixtures", "players"]
-    assert len(pd.read_parquet(indexed["players"])) == 1
+    assert len(pd.read_parquet(BytesIO(store.get(indexed["players"])))) == 1
     assert snapshot.row_count == 2
 
 
 def test_identical_pull_is_skipped(
-    session: Session, files: list[SourceFile], tmp_path: Path
+    session: Session, files: list[SourceFile], store: FilesystemStore, tmp_path: Path
 ) -> None:
     def run(fetched_at: datetime) -> Snapshot | None:
         return archive(
@@ -70,7 +72,7 @@ def test_identical_pull_is_skipped(
             source="fpl_core",
             season="2026-2027",
             source_ref="main",
-            root=tmp_path,
+            store=store,
             fetched_at=fetched_at,
         )
 
@@ -82,15 +84,13 @@ def test_identical_pull_is_skipped(
     assert len(list(tmp_path.rglob("*.parquet"))) == 2
 
 
-def test_empty_pull_is_rejected(session: Session, tmp_path: Path) -> None:
+def test_empty_pull_is_rejected(session: Session, store: FilesystemStore) -> None:
     with pytest.raises(ValueError, match="nothing to archive"):
-        archive(
-            session, [], source="fpl_core", season="2026-2027", source_ref="main", root=tmp_path
-        )
+        archive(session, [], source="fpl_core", season="2026-2027", source_ref="main", store=store)
 
 
 def test_unchanged_file_is_stored_once(
-    session: Session, files: list[SourceFile], tmp_path: Path
+    session: Session, files: list[SourceFile], store: FilesystemStore, tmp_path: Path
 ) -> None:
     archive(
         session,
@@ -98,7 +98,7 @@ def test_unchanged_file_is_stored_once(
         source="fpl_core",
         season="2026-2027",
         source_ref="main",
-        root=tmp_path,
+        store=store,
         fetched_at=FETCHED_AT,
     )
     changed = [files[0], make_file("GW4/fixtures.csv", b"gameweek,match_id\n4,def\n")]
@@ -108,7 +108,7 @@ def test_unchanged_file_is_stored_once(
         source="fpl_core",
         season="2026-2027",
         source_ref="main",
-        root=tmp_path,
+        store=store,
         fetched_at=datetime(2026, 8, 31, 18, 0, tzinfo=UTC),
     )
 
@@ -127,7 +127,7 @@ def test_file_hash_tracks_content() -> None:
 
 
 def test_archive_records_a_row_per_file(
-    session: Session, files: list[SourceFile], tmp_path: Path
+    session: Session, files: list[SourceFile], store: FilesystemStore
 ) -> None:
     snapshot = archive(
         session,
@@ -135,7 +135,7 @@ def test_archive_records_a_row_per_file(
         source="fpl_core",
         season="2026-2027",
         source_ref="main",
-        root=tmp_path,
+        store=store,
         fetched_at=FETCHED_AT,
     )
 
@@ -197,3 +197,23 @@ def test_one_row_per_file_name_in_a_snapshot(session: Session) -> None:
 
     with pytest.raises(IntegrityError):
         session.flush()
+
+
+def test_archive_writes_through_the_store(
+    session: Session, files: list[SourceFile], store: FilesystemStore
+) -> None:
+    snapshot = archive(
+        session,
+        files,
+        source="fpl_core",
+        season="2026-2027",
+        source_ref="main",
+        store=store,
+        fetched_at=FETCHED_AT,
+    )
+
+    assert snapshot is not None
+    rows = session.scalars(
+        select(SnapshotFile).where(SnapshotFile.snapshot_id == snapshot.id)
+    ).all()
+    assert all(store.get(row.storage_uri) for row in rows)

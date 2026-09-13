@@ -6,13 +6,13 @@ own. Everything downstream reads these archives rather than the network.
 
 import hashlib
 from datetime import UTC, datetime
-from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from plpd.db.tables import Snapshot, SnapshotFile
 from plpd.ingest.fpl_core import SourceFile
+from plpd.ingest.storage import ObjectStore
 
 
 def content_hash(files: list[SourceFile]) -> str:
@@ -36,7 +36,7 @@ def archive(
     source: str,
     season: str,
     source_ref: str,
-    root: Path,
+    store: ObjectStore,
     fetched_at: datetime | None = None,
 ) -> Snapshot | None:
     """Write the pull to Parquet and record it. None means upstream hadn't changed."""
@@ -73,19 +73,16 @@ def archive(
         # to_parquet returns bytes when given no path. The stubs allow None too.
         if data is None:
             raise RuntimeError(f"pandas returned no bytes for {file.name}")
-        # Named by content, so a file upstream has not changed resolves to a path
-        # that already holds it.
+        # Keyed by content, so a file upstream has not changed resolves to a key
+        # the store already holds.
         stored = file_hash(data)
-        path = root / source / stem / f"{stored}.parquet"
-        if not path.is_file():
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(data)
+        uri = store.put(f"{source}/{stem}/{stored}.parquet", data)
         session.add(
             SnapshotFile(
                 snapshot_id=snapshot.id,
                 name=stem,
                 content_hash=stored,
-                storage_uri=path.as_posix(),
+                storage_uri=uri,
                 row_count=len(file.frame),
             )
         )

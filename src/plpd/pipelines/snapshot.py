@@ -12,6 +12,7 @@ from plpd.config import Settings
 from plpd.db import build_engine, build_session_factory
 from plpd.ingest import (
     ClubFootballOddsSource,
+    FilesystemStore,
     FplCoreLegacySource,
     FplCoreSource,
     SourceError,
@@ -49,6 +50,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     else:
         source = FplCoreSource(settings)
     session_factory = build_session_factory(build_engine(settings))
+    store = FilesystemStore(settings.snapshot_root)
 
     for season in args.season or [settings.current_season]:
         try:
@@ -64,7 +66,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 source=source.name,
                 season=season,
                 source_ref=settings.fpl_core_ref,
-                root=settings.snapshot_root,
+                store=store,
             )
             if snapshot is None:
                 log.info("%s unchanged since last pull", season)
