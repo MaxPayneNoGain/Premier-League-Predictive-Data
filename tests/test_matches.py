@@ -47,6 +47,18 @@ def test_rows_come_back_oldest_first(session: Session) -> None:
     assert list(finished_matches(session)["match_id"]) == ["earlier", "later"]
 
 
+def test_matches_kicking_off_together_come_back_in_a_fixed_order(session: Session) -> None:
+    # A Saturday afternoon puts several matches on the same clock, and an order
+    # that leaves those tied is free to change between two databases holding the
+    # same rows.
+    together = datetime(2025, 8, 16, 15, 0, tzinfo=UTC)
+    add(session, "second", kickoff_time=together)
+    add(session, "first", kickoff_time=together)
+    add(session, "third", kickoff_time=together)
+
+    assert list(finished_matches(session)["match_id"]) == ["first", "second", "third"]
+
+
 def test_scores_arrive_as_goals(session: Session) -> None:
     add(session, "played", home_score=3, away_score=0)
 

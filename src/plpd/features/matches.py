@@ -65,7 +65,7 @@ def finished_matches(session: Session, *, tournament: str = "prem") -> pd.DataFr
             Fixture.home_score.is_not(None),
             Fixture.away_score.is_not(None),
         )
-        .order_by(Fixture.kickoff_time)
+        .order_by(Fixture.kickoff_time, Fixture.match_id)
     )
     rows = [dict(row) for row in session.execute(statement).mappings()]
     return pd.DataFrame(rows, columns=COLUMNS)
@@ -91,7 +91,7 @@ def round_fixtures(
             Fixture.home_team_code.is_not(None),
             Fixture.away_team_code.is_not(None),
         )
-        .order_by(Fixture.kickoff_time)
+        .order_by(Fixture.kickoff_time, Fixture.match_id)
     )
     rows = [dict(row) for row in session.execute(statement).mappings()]
     return pd.DataFrame(rows, columns=ROUND_COLUMNS)
@@ -111,7 +111,7 @@ def next_round(session: Session, *, season: str, tournament: str = "prem") -> in
             Fixture.finished.is_(False),
             Fixture.kickoff_time.is_not(None),
         )
-        .order_by(Fixture.kickoff_time)
+        .order_by(Fixture.kickoff_time, Fixture.match_id)
         .limit(1)
     )
     gameweek = session.scalar(statement)
