@@ -14,9 +14,9 @@ from plpd.config import Settings
 from plpd.db import build_engine, build_session_factory
 from plpd.ingest import (
     ClubFootballOddsSource,
-    FilesystemStore,
     FplCoreLegacySource,
     FplCoreSource,
+    build_store,
 )
 from plpd.ingest.load import (
     archived_snapshots,
@@ -58,7 +58,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     settings = Settings()
     session_factory = build_session_factory(build_engine(settings))
-    store = FilesystemStore(settings.snapshot_root)
+    store = build_store(settings)
     if args.odds:
         source = ClubFootballOddsSource.name
     elif args.legacy:

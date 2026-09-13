@@ -4,6 +4,8 @@ from typing import Protocol
 
 import httpx
 
+from plpd.config import Settings
+
 API_BASE = "https://api.github.com"
 UPLOAD_BASE = "https://uploads.github.com"
 PAGE_SIZE = 100
@@ -157,3 +159,9 @@ class GitHubReleaseStore:
             if len(batch) < PAGE_SIZE:
                 return self._assets[tag]
             page += 1
+
+
+def build_store(settings: Settings) -> ObjectStore:
+    if settings.archive_backend == "github":
+        return GitHubReleaseStore(settings.archive_repo, settings.archive_token)
+    return FilesystemStore(settings.snapshot_root)

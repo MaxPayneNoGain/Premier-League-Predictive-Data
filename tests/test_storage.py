@@ -2,7 +2,12 @@ from pathlib import Path
 
 import pytest
 
-from plpd.ingest.storage import FilesystemStore
+from plpd.config import Settings
+from plpd.ingest.storage import (
+    FilesystemStore,
+    GitHubReleaseStore,
+    build_store,
+)
 
 
 def test_put_returns_a_uri_that_get_reads_back(tmp_path: Path) -> None:
@@ -44,3 +49,20 @@ def test_put_does_not_overwrite_an_existing_key(tmp_path: Path) -> None:
 
     assert first == second
     assert store.get(first) == b"original"
+
+
+def test_build_store_returns_the_filesystem_by_default(tmp_path: Path) -> None:
+    settings = Settings(_env_file=None, snapshot_root=tmp_path)
+
+    assert isinstance(build_store(settings), FilesystemStore)
+
+
+def test_build_store_returns_the_release_store_when_asked() -> None:
+    settings = Settings(
+        _env_file=None,
+        archive_backend="github",
+        archive_repo="owner/plpd-snapshots",
+        archive_token="token",
+    )
+
+    assert isinstance(build_store(settings), GitHubReleaseStore)

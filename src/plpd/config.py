@@ -2,8 +2,9 @@
 
 import re
 from pathlib import Path
+from typing import Literal, Self
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 SEASON_PATTERN = re.compile(r"^\d{4}-\d{4}$")
@@ -22,9 +23,19 @@ class Settings(BaseSettings):
     fpl_core_ref: str = "main"
     odds_ref: str = "main"
 
+    archive_backend: Literal["filesystem", "github"] = "filesystem"
+    archive_repo: str = ""
+    archive_token: str = ""
+
     @field_validator("current_season")
     @classmethod
     def check_season(cls, value: str) -> str:
         if not SEASON_PATTERN.match(value):
             raise ValueError(f"season must look like '2026-2027', got {value!r}")
         return value
+
+    @model_validator(mode="after")
+    def check_archive(self) -> Self:
+        if self.archive_backend == "github" and not (self.archive_repo and self.archive_token):
+            raise ValueError("github archive needs archive_repo and archive_token")
+        return self
