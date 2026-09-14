@@ -73,10 +73,16 @@ def archive(
         # to_parquet returns bytes when given no path. The stubs allow None too.
         if data is None:
             raise RuntimeError(f"pandas returned no bytes for {file.name}")
-        # Keyed by content, so a file upstream has not changed resolves to a key
-        # the store already holds.
         stored = file_hash(data)
-        uri = store.put(f"{source}/{stem}/{stored}.parquet", data)
+        # Rows sharing a hash can hold different uris.
+        uri = session.scalar(
+            select(SnapshotFile.storage_uri)
+            .where(SnapshotFile.content_hash == stored)
+            .order_by(SnapshotFile.id)
+            .limit(1)
+        )
+        if uri is None:
+            uri = store.put(f"{source}/{stem}/{stored}.parquet", data)
         session.add(
             SnapshotFile(
                 snapshot_id=snapshot.id,

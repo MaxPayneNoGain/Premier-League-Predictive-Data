@@ -217,3 +217,68 @@ def test_archive_writes_through_the_store(
         select(SnapshotFile).where(SnapshotFile.snapshot_id == snapshot.id)
     ).all()
     assert all(store.get(row.storage_uri) for row in rows)
+
+
+TEAMS = b"code,id\n3,1\n"
+
+
+def pull(players: bytes) -> list[SourceFile]:
+    return [make_file("teams.csv", TEAMS), make_file("players.csv", players)]
+
+
+def test_an_unchanged_file_reuses_its_indexed_uri(session: Session, store: FilesystemStore) -> None:
+    first = archive(
+        session,
+        pull(b"player_code,web_name\n118748,Vieira\n"),
+        source="fpl_core",
+        season="2026-2027",
+        source_ref="main",
+        store=store,
+    )
+    second = archive(
+        session,
+        pull(b"player_code,web_name\n118748,Saka\n"),
+        source="fpl_core",
+        season="2026-2027",
+        source_ref="main",
+        store=store,
+    )
+
+    assert first is not None
+    assert second is not None
+    teams = {
+        row.snapshot_id: row.storage_uri
+        for row in session.scalars(select(SnapshotFile).where(SnapshotFile.name == "teams"))
+    }
+    assert teams[first.id] == teams[second.id]
+
+
+def test_a_reused_uri_never_reaches_the_store(session: Session, store: FilesystemStore) -> None:
+    keys: list[str] = []
+
+    class Recording(FilesystemStore):
+        def put(self, key: str, data: bytes) -> str:
+            keys.append(key)
+            return super().put(key, data)
+
+    recording = Recording(store.root)
+    archive(
+        session,
+        pull(b"player_code,web_name\n118748,Vieira\n"),
+        source="fpl_core",
+        season="2026-2027",
+        source_ref="main",
+        store=recording,
+    )
+    keys.clear()
+    archive(
+        session,
+        pull(b"player_code,web_name\n118748,Saka\n"),
+        source="fpl_core",
+        season="2026-2027",
+        source_ref="main",
+        store=recording,
+    )
+
+    assert not any(key.startswith("fpl_core/teams/") for key in keys)
+    assert any(key.startswith("fpl_core/players/") for key in keys)
