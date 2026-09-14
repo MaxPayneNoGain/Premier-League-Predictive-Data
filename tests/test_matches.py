@@ -67,6 +67,24 @@ def test_scores_arrive_as_goals(session: Session) -> None:
     assert match["home_team_code"] == 3
 
 
+def test_seasons_narrow_the_frame(session: Session) -> None:
+    add(session, "older", season="2024-2025")
+    add(session, "current", season="2025-2026", kickoff_time=LATER)
+    add(session, "live", season="2026-2027", kickoff_time=LATEST)
+
+    narrowed = finished_matches(session, seasons=["2024-2025", "2025-2026"])
+
+    assert list(narrowed["match_id"]) == ["older", "current"]
+    assert len(finished_matches(session)) == 3
+
+
+def test_no_seasons_given_keeps_every_season(session: Session) -> None:
+    add(session, "older", season="2024-2025")
+    add(session, "live", season="2026-2027", kickoff_time=LATER)
+
+    assert len(finished_matches(session, seasons=None)) == 2
+
+
 def test_an_empty_result_still_has_the_columns(session: Session) -> None:
     frame = finished_matches(session)
 

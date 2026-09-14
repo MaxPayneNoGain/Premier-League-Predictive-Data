@@ -54,6 +54,7 @@ OUTCOMES = ("home", "draw", "away")
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="plpd-backtest")
+    parser.add_argument("--season", action="append", metavar="YYYY-YYYY")
     parser.add_argument("--tournament", default="prem")
     parser.add_argument("--min-train", type=int, default=60)
     parser.add_argument(
@@ -71,11 +72,14 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     settings = Settings()
     with build_session_factory(build_engine(settings))() as session:
-        matches = finished_matches(session, tournament=args.tournament)
+        matches = finished_matches(session, tournament=args.tournament, seasons=args.season)
         odds = match_odds(session, tournament=args.tournament)
 
     if matches.empty:
-        log.error("no finished %s matches are loaded - run plpd-load first", args.tournament)
+        window = " in " + ", ".join(args.season) if args.season else ""
+        log.error(
+            "no finished %s matches%s are loaded - run plpd-load first", args.tournament, window
+        )
         return 1
 
     matches = matches.merge(odds, on="match_id", how="left")
@@ -93,6 +97,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     chosen = None
     uncertainty = 0.0
     scored: dict[str, Scores] = {}
+    if args.season:
+        print(f"seasons {', '.join(args.season)}\n")
     print(
         f"{'predictor':<22}{'matches':>9}{'Brier':>9}{'log loss':>11}"
         f"{'RPS':>9}{'reliability':>13}{'resolution':>12}"

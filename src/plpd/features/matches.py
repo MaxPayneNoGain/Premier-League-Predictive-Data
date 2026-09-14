@@ -5,6 +5,8 @@ model can be fitted on. Frames start here — nothing below this layer handles a
 DataFrame, which keeps the database code independent of the dataframe library.
 """
 
+from collections.abc import Sequence
+
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
@@ -38,7 +40,9 @@ PRICE_COLUMNS = ["home_odds", "draw_odds", "away_odds"]
 ODDS_COLUMNS = ["match_id", *PRICE_COLUMNS]
 
 
-def finished_matches(session: Session, *, tournament: str = "prem") -> pd.DataFrame:
+def finished_matches(
+    session: Session, *, tournament: str = "prem", seasons: Sequence[str] | None = None
+) -> pd.DataFrame:
     """Played matches with a result and both clubs identified, oldest first.
 
     Rows missing a team code are dropped rather than filled: upstream leaves the
@@ -67,6 +71,8 @@ def finished_matches(session: Session, *, tournament: str = "prem") -> pd.DataFr
         )
         .order_by(Fixture.kickoff_time, Fixture.match_id)
     )
+    if seasons is not None:
+        statement = statement.where(Fixture.season.in_(seasons))
     rows = [dict(row) for row in session.execute(statement).mappings()]
     return pd.DataFrame(rows, columns=COLUMNS)
 
