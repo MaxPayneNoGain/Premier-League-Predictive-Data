@@ -87,14 +87,15 @@ def test_a_club_in_several_seasons_does_not_multiply_the_row(session: Session) -
     assert len(latest_predictions(session, season=SEASON, gameweek=1)) == 1
 
 
-def test_team_names_replace_the_codes(session: Session) -> None:
+def test_a_row_carries_both_name_forms_and_the_code(session: Session) -> None:
     clubs(session)
     fixture(session, "match")
     prediction(session, "match")
 
     row = latest_predictions(session, season=SEASON, gameweek=1)[0]
 
-    assert (row.home_team, row.away_team) == ("Arsenal", "Chelsea")
+    assert (row.home_team, row.home_short, row.home_code) == ("Arsenal", "ARS", 3)
+    assert (row.away_team, row.away_short, row.away_code) == ("Chelsea", "CHE", 8)
 
 
 def test_a_prediction_made_after_kickoff_is_a_retrodiction(session: Session) -> None:

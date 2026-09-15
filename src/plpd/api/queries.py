@@ -16,6 +16,10 @@ class PredictedMatch:
     kickoff_time: datetime | None
     home_team: str
     away_team: str
+    home_short: str
+    away_short: str
+    home_code: int
+    away_code: int
     home_win: float
     draw: float
     away_win: float
@@ -54,6 +58,10 @@ def latest_predictions(
             Fixture.kickoff_time,
             home.name.label("home_team"),
             away.name.label("away_team"),
+            home.short_name.label("home_short"),
+            away.short_name.label("away_short"),
+            Fixture.home_team_code.label("home_code"),
+            Fixture.away_team_code.label("away_code"),
             ranked.c.home_win,
             ranked.c.draw,
             ranked.c.away_win,
@@ -83,6 +91,10 @@ def latest_predictions(
             kickoff_time=row.kickoff_time,
             home_team=row.home_team,
             away_team=row.away_team,
+            home_short=row.home_short,
+            away_short=row.away_short,
+            home_code=row.home_code,
+            away_code=row.away_code,
             home_win=row.home_win,
             draw=row.draw,
             away_win=row.away_win,

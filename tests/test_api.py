@@ -79,6 +79,7 @@ def test_a_round_returns_one_entry_per_fixture(client: TestClient, session: Sess
     assert len(body["matches"]) == 1
     assert body["matches"][0]["home_team"] == "Arsenal"
     assert body["matches"][0]["away_team"] == "Chelsea"
+    assert (body["matches"][0]["home_short"], body["matches"][0]["home_code"]) == ("ARS", 3)
     assert body["matches"][0]["retrodiction"] is False
 
 

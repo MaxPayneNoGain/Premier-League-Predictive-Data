@@ -32,6 +32,10 @@ class MatchPrediction(BaseModel):
     kickoff_time: datetime | None
     home_team: str
     away_team: str
+    home_short: str
+    away_short: str
+    home_code: int
+    away_code: int
     home_win: float
     draw: float
     away_win: float
