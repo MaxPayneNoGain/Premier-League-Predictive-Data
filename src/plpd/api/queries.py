@@ -20,6 +20,8 @@ class PredictedMatch:
     away_short: str
     home_code: int
     away_code: int
+    home_score: int | None
+    away_score: int | None
     home_win: float
     draw: float
     away_win: float
@@ -62,6 +64,8 @@ def latest_predictions(
             away.short_name.label("away_short"),
             Fixture.home_team_code.label("home_code"),
             Fixture.away_team_code.label("away_code"),
+            Fixture.home_score,
+            Fixture.away_score,
             ranked.c.home_win,
             ranked.c.draw,
             ranked.c.away_win,
@@ -95,6 +99,8 @@ def latest_predictions(
             away_short=row.away_short,
             home_code=row.home_code,
             away_code=row.away_code,
+            home_score=row.home_score,
+            away_score=row.away_score,
             home_win=row.home_win,
             draw=row.draw,
             away_win=row.away_win,

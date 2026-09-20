@@ -81,6 +81,17 @@ def test_a_round_returns_one_entry_per_fixture(client: TestClient, session: Sess
     assert body["matches"][0]["away_team"] == "Chelsea"
     assert (body["matches"][0]["home_short"], body["matches"][0]["home_code"]) == ("ARS", 3)
     assert body["matches"][0]["retrodiction"] is False
+    assert (body["matches"][0]["home_score"], body["matches"][0]["away_score"]) == (None, None)
+
+
+def test_a_played_fixture_serves_its_score(client: TestClient, session: Session) -> None:
+    clubs(session)
+    fixture(session, "match", finished=True, home_score=2, away_score=1)
+    prediction(session, "match")
+
+    match = client.get(f"/predictions/{SEASON}/1").json()["matches"][0]
+
+    assert (match["home_score"], match["away_score"]) == (2, 1)
 
 
 def test_an_unpredicted_round_is_empty_not_missing(client: TestClient, session: Session) -> None:

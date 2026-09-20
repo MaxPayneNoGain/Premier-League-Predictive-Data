@@ -7,6 +7,8 @@ export interface MatchPrediction {
   away_short: string;
   home_code: number;
   away_code: number;
+  home_score: number | null;
+  away_score: number | null;
   home_win: number;
   draw: number;
   away_win: number;

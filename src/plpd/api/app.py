@@ -36,6 +36,8 @@ class MatchPrediction(BaseModel):
     away_short: str
     home_code: int
     away_code: int
+    home_score: int | None
+    away_score: int | None
     home_win: float
     draw: float
     away_win: float

@@ -98,6 +98,21 @@ def test_a_row_carries_both_name_forms_and_the_code(session: Session) -> None:
     assert (row.away_team, row.away_short, row.away_code) == ("Chelsea", "CHE", 8)
 
 
+def test_a_played_fixture_carries_its_score_and_an_unplayed_one_does_not(session: Session) -> None:
+    clubs(session)
+    fixture(session, "played", finished=True, home_score=2, away_score=1)
+    fixture(session, "upcoming", home_team_code=8, away_team_code=3)
+    prediction(session, "played")
+    prediction(session, "upcoming")
+
+    rows = latest_predictions(session, season=SEASON, gameweek=1)
+
+    assert {row.match_id: (row.home_score, row.away_score) for row in rows} == {
+        "played": (2, 1),
+        "upcoming": (None, None),
+    }
+
+
 def test_a_prediction_made_after_kickoff_is_a_retrodiction(session: Session) -> None:
     clubs(session)
     fixture(session, "forecast")
